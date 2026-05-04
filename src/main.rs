@@ -188,8 +188,7 @@ impl CellularApp {
         }
     }
 
-    fn new_rule(&mut self) {
-        self.rule_no = rand::rng().random::<u64>();
+    fn restart_same_rule(&mut self) {
         self.receiver = spawn_sim(
             self.rule_no,
             self.sim_width,
@@ -201,6 +200,11 @@ impl CellularApp {
         self.texture = None;
         self.view_initialized = false;
     }
+
+    fn new_rule(&mut self) {
+        self.rule_no = rand::rng().random::<u64>();
+        self.restart_same_rule();
+    }
 }
 
 impl eframe::App for CellularApp {
@@ -208,6 +212,10 @@ impl eframe::App for CellularApp {
         // Sync slider → atomic so the running sim thread sees changes immediately.
         self.noise_atomic
             .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
+
+        if ctx.input(|i| i.key_pressed(egui::Key::N)) {
+            self.new_rule();
+        }
 
         let prev_rows = self.rows_done;
         loop {
@@ -254,7 +262,7 @@ impl eframe::App for CellularApp {
 
                 ui.separator();
                 ui.label("Noise:");
-                ui.add(
+                let noise_resp = ui.add(
                     egui::Slider::new(&mut self.noise_slider, 0.0f64..=1.0)
                         .custom_formatter(|v, _| format!("{:.2e}", noise_from_slider(v)))
                         .custom_parser(|s| {
@@ -267,6 +275,12 @@ impl eframe::App for CellularApp {
                             })
                         }),
                 );
+                if noise_resp.changed() {
+                    // Sync atomic before spawning so the new thread starts with the right value.
+                    self.noise_atomic
+                        .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
+                    self.restart_same_rule();
+                }
             });
         });
 
