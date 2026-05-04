@@ -1,5 +1,7 @@
 use eframe::egui;
-use rand::Rng;
+use rand::{Rng, SeedableRng, rngs::SmallRng};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -23,9 +25,18 @@ impl<'a> Looped<'a> {
     }
 }
 
-fn build_arena(n: usize, options: &[u8]) -> Vec<u8> {
-    let mut rng = rand::rng();
+fn build_arena(n: usize, options: &[u8], seed: u64) -> Vec<u8> {
+    let mut rng = SmallRng::seed_from_u64(seed);
     (0..n).map(|_| options[rng.random_range(0..options.len())]).collect()
+}
+
+fn parse_seed(text: &str) -> u64 {
+    if let Ok(n) = text.trim().parse::<u64>() {
+        return n;
+    }
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
 }
 
 struct Rule {
@@ -67,11 +78,10 @@ fn apply_step(arena: &[u8], rule: &Rule, out: &mut Vec<u8>) {
     }
 }
 
-fn apply_noise(arena: &mut [u8], noise: f64) {
+fn apply_noise(arena: &mut [u8], noise: f64, rng: &mut SmallRng) {
     if noise <= 0.0 {
         return;
     }
-    let mut rng = rand::rng();
     for cell in arena.iter_mut() {
         if rng.random::<f64>() <= noise {
             *cell = if rng.random::<bool>() { 1 } else { 0 };
@@ -105,12 +115,14 @@ fn spawn_sim(
     sim_width: usize,
     sim_height: usize,
     noise_atomic: Arc<AtomicU64>,
+    seed: u64,
 ) -> mpsc::Receiver<SimBatch> {
     let (tx, rx) = mpsc::channel();
     let rn = rule_no as u128;
     thread::spawn(move || {
         let rule = Rule::new(rn, 6);
-        let mut current = build_arena(sim_width, &[0, 1]);
+        let mut current = build_arena(sim_width, &[0, 1], seed);
+        let mut noise_rng = SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15);
         let mut next = vec![0u8; sim_width];
 
         let mut batch_pixels = Vec::with_capacity(BATCH_SIZE * sim_width);
@@ -122,7 +134,7 @@ fn spawn_sim(
         let t0 = std::time::Instant::now();
         for row in 1..sim_height {
             let noise = f64::from_bits(noise_atomic.load(Ordering::Relaxed));
-            apply_noise(&mut current, noise);
+            apply_noise(&mut current, noise, &mut noise_rng);
             apply_step(&current, &rule, &mut next);
             std::mem::swap(&mut current, &mut next);
 
@@ -155,9 +167,12 @@ struct CellularApp {
     texture: Option<egui::TextureHandle>,
     sim_width: usize,
     sim_height: usize,
+    sim_size: usize,
     rule_no: u64,
     rule_lookup: Vec<u8>,
     show_rule_editor: bool,
+    seed: u64,
+    seed_text: String,
     zoom: f32,
     pan: egui::Vec2,
     view_initialized: bool,
@@ -171,8 +186,9 @@ impl CellularApp {
         let noise_atomic =
             Arc::new(AtomicU64::new(noise_from_slider(noise_slider).to_bits()));
         let rule_no = rand::rng().random::<u64>();
+        let seed = rand::rng().random::<u64>();
         let receiver =
-            spawn_sim(rule_no, sim_width, sim_height, Arc::clone(&noise_atomic));
+            spawn_sim(rule_no, sim_width, sim_height, Arc::clone(&noise_atomic), seed);
         let rule_lookup = rule_lookup_from_no(rule_no);
 
         CellularApp {
@@ -180,11 +196,14 @@ impl CellularApp {
             image_buffer: vec![egui::Color32::BLACK; sim_width * sim_height],
             rows_done: 0,
             texture: None,
+            sim_size: sim_width,
             sim_width,
             sim_height,
             rule_no,
             rule_lookup,
             show_rule_editor: false,
+            seed,
+            seed_text: seed.to_string(),
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
             view_initialized: false,
@@ -199,8 +218,20 @@ impl CellularApp {
             self.sim_width,
             self.sim_height,
             Arc::clone(&self.noise_atomic),
+            self.seed,
         );
         self.image_buffer.fill(egui::Color32::BLACK);
+        self.rows_done = 0;
+        self.texture = None;
+        self.view_initialized = false;
+    }
+
+    fn resize_and_restart(&mut self, size: usize) {
+        self.sim_size = size;
+        self.sim_width = size;
+        self.sim_height = size;
+        self.image_buffer = vec![egui::Color32::BLACK; size * size];
+        self.receiver = spawn_sim(self.rule_no, size, size, Arc::clone(&self.noise_atomic), self.seed);
         self.rows_done = 0;
         self.texture = None;
         self.view_initialized = false;
@@ -397,6 +428,30 @@ impl eframe::App for CellularApp {
                     // Sync atomic before spawning so the new thread starts with the right value.
                     self.noise_atomic
                         .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
+                    self.restart_same_rule();
+                }
+
+                ui.separator();
+                ui.label("Size:");
+                let size_resp = ui.add(
+                    egui::Slider::new(&mut self.sim_size, 100..=16000)
+                        .suffix("px")
+                        .integer(),
+                );
+                if size_resp.drag_stopped() || size_resp.lost_focus() {
+                    let new_size = self.sim_size;
+                    self.resize_and_restart(new_size);
+                }
+
+                ui.separator();
+                ui.label("Seed:");
+                let seed_resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.seed_text).desired_width(140.0),
+                );
+                if seed_resp.lost_focus() {
+                    self.seed = parse_seed(&self.seed_text);
+                    // Normalize display back to the resolved number only if it was a plain number.
+                    // Leave arbitrary strings as-is so the user can see what they typed.
                     self.restart_same_rule();
                 }
             });
