@@ -92,9 +92,12 @@ fn tex_options() -> egui::TextureOptions {
     }
 }
 
-struct SimRow {
-    index: usize,
-    pixels: Vec<u8>,
+const BATCH_SIZE: usize = 10;
+
+// Flat row-major pixel buffer for a contiguous range of rows.
+struct SimBatch {
+    start: usize,
+    pixels: Vec<u8>, // len == count * sim_width; count derived by receiver
 }
 
 fn spawn_sim(
@@ -102,7 +105,7 @@ fn spawn_sim(
     sim_width: usize,
     sim_height: usize,
     noise_atomic: Arc<AtomicU64>,
-) -> mpsc::Receiver<SimRow> {
+) -> mpsc::Receiver<SimBatch> {
     let (tx, rx) = mpsc::channel();
     let rn = rule_no as u128;
     thread::spawn(move || {
@@ -110,22 +113,35 @@ fn spawn_sim(
         let mut current = build_arena(sim_width, &[0, 1]);
         let mut next = vec![0u8; sim_width];
 
-        if tx.send(SimRow { index: 0, pixels: current.clone() }).is_err() {
-            return;
-        }
+        let mut batch_pixels = Vec::with_capacity(BATCH_SIZE * sim_width);
+        let mut batch_start = 0usize;
+
+        // Seed the first batch with row 0 (initial state).
+        batch_pixels.extend_from_slice(&current);
+
         let t0 = std::time::Instant::now();
         for row in 1..sim_height {
             let noise = f64::from_bits(noise_atomic.load(Ordering::Relaxed));
             apply_noise(&mut current, noise);
-            // Write new state into `next` — no allocation inside apply_step.
             apply_step(&current, &rule, &mut next);
-            // Swap: `current` becomes the new state, `next` becomes free scratch.
             std::mem::swap(&mut current, &mut next);
-            // `current` is the row we want to display; clone it for the channel.
-            // One allocation per step (4 kB), down from three.
-            if tx.send(SimRow { index: row, pixels: current.clone() }).is_err() {
-                return;
+
+            batch_pixels.extend_from_slice(&current);
+
+            if batch_pixels.len() == BATCH_SIZE * sim_width {
+                let pixels = std::mem::replace(
+                    &mut batch_pixels,
+                    Vec::with_capacity(BATCH_SIZE * sim_width),
+                );
+                if tx.send(SimBatch { start: batch_start, pixels }).is_err() {
+                    return;
+                }
+                batch_start = row + 1;
             }
+        }
+        // Flush any remaining rows (last partial batch).
+        if !batch_pixels.is_empty() {
+            tx.send(SimBatch { start: batch_start, pixels: batch_pixels }).ok();
         }
         println!("simulation done in {:.2?}", t0.elapsed());
     });
@@ -133,7 +149,7 @@ fn spawn_sim(
 }
 
 struct CellularApp {
-    receiver: mpsc::Receiver<SimRow>,
+    receiver: mpsc::Receiver<SimBatch>,
     image_buffer: Vec<egui::Color32>,
     rows_done: usize,
     texture: Option<egui::TextureHandle>,
@@ -196,15 +212,18 @@ impl eframe::App for CellularApp {
         let prev_rows = self.rows_done;
         loop {
             match self.receiver.try_recv() {
-                Ok(msg) => {
-                    let offset = msg.index * self.sim_width;
-                    for (col, &val) in msg.pixels.iter().enumerate() {
-                        self.image_buffer[offset + col] =
-                            egui::Color32::from_gray(val.saturating_mul(255));
+                Ok(batch) => {
+                    let count = batch.pixels.len() / self.sim_width;
+                    for r in 0..count {
+                        let row = batch.start + r;
+                        let src = r * self.sim_width;
+                        let dst = row * self.sim_width;
+                        for (col, &val) in batch.pixels[src..src + self.sim_width].iter().enumerate() {
+                            self.image_buffer[dst + col] =
+                                egui::Color32::from_gray(val.saturating_mul(255));
+                        }
                     }
-                    if msg.index + 1 > self.rows_done {
-                        self.rows_done = msg.index + 1;
-                    }
+                    self.rows_done = self.rows_done.max(batch.start + count);
                 }
                 Err(_) => break,
             }
