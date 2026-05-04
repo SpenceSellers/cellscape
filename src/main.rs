@@ -1,23 +1,25 @@
 use eframe::egui;
 use rand::Rng;
-use std::sync::mpsc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+    mpsc,
+};
 use std::thread;
 
-struct Looped {
-    collection: Vec<u8>,
+struct Looped<'a> {
+    slice: &'a [u8],
     len: isize,
 }
 
-impl Looped {
-    fn new(collection: Vec<u8>) -> Self {
-        let len = collection.len() as isize;
-        Self { collection, len }
+impl<'a> Looped<'a> {
+    fn new(slice: &'a [u8]) -> Self {
+        Self { slice, len: slice.len() as isize }
     }
 
     #[inline]
     fn get(&self, key: isize) -> u8 {
-        let adjusted_key = ((key % self.len + self.len) % self.len) as usize;
-        self.collection[adjusted_key]
+        self.slice[((key % self.len + self.len) % self.len) as usize]
     }
 }
 
@@ -28,6 +30,7 @@ fn build_arena(n: usize, options: &[u8]) -> Vec<u8> {
 
 struct Rule {
     lookup: Vec<u8>,
+    half_width: isize,
 }
 
 impl Rule {
@@ -41,27 +44,27 @@ impl Rule {
                 lookup[i] = 1;
             }
         }
-        Self { lookup }
+        Self { lookup, half_width: (width / 2) as isize }
     }
 
-    fn apply(&self, arena: &Looped, i: usize, width: usize) -> u8 {
-        let n = width / 2;
+    #[inline]
+    fn apply(&self, arena: &Looped, i: usize) -> u8 {
         let i_isize = i as isize;
         let mut state = 0usize;
-        for di in -(n as isize)..=(n as isize) {
+        for di in -self.half_width..=self.half_width {
             state = (state << 1) | (arena.get(i_isize + di) as usize);
         }
-        if state < self.lookup.len() {
-            self.lookup[state]
-        } else {
-            0
-        }
+        if state < self.lookup.len() { self.lookup[state] } else { 0 }
     }
 }
 
-fn apply_step(arena: &[u8], rule: &Rule, width: usize) -> Vec<u8> {
-    let looped = Looped::new(arena.to_vec());
-    (0..arena.len()).map(|i| rule.apply(&looped, i, width)).collect()
+// Writes into `out` in-place; no allocation.
+fn apply_step(arena: &[u8], rule: &Rule, out: &mut Vec<u8>) {
+    let looped = Looped::new(arena);
+    out.resize(arena.len(), 0);
+    for i in 0..arena.len() {
+        out[i] = rule.apply(&looped, i);
+    }
 }
 
 fn apply_noise(arena: &mut [u8], noise: f64) {
@@ -76,8 +79,11 @@ fn apply_noise(arena: &mut [u8], noise: f64) {
     }
 }
 
-// Nearest for magnification (zoom in stays pixel-perfect),
-// Linear for minification (zoom out is smooth).
+// Exponential mapping: s=0 → ~1e-7, s=0.5 → 1e-4, s=1 → 0.1
+fn noise_from_slider(s: f64) -> f64 {
+    10f64.powf(s * 6.0 - 7.0)
+}
+
 fn tex_options() -> egui::TextureOptions {
     egui::TextureOptions {
         magnification: egui::TextureFilter::Nearest,
@@ -91,6 +97,41 @@ struct SimRow {
     pixels: Vec<u8>,
 }
 
+fn spawn_sim(
+    rule_no: u64,
+    sim_width: usize,
+    sim_height: usize,
+    noise_atomic: Arc<AtomicU64>,
+) -> mpsc::Receiver<SimRow> {
+    let (tx, rx) = mpsc::channel();
+    let rn = rule_no as u128;
+    thread::spawn(move || {
+        let rule = Rule::new(rn, 6);
+        let mut current = build_arena(sim_width, &[0, 1]);
+        let mut next = vec![0u8; sim_width];
+
+        if tx.send(SimRow { index: 0, pixels: current.clone() }).is_err() {
+            return;
+        }
+        let t0 = std::time::Instant::now();
+        for row in 1..sim_height {
+            let noise = f64::from_bits(noise_atomic.load(Ordering::Relaxed));
+            apply_noise(&mut current, noise);
+            // Write new state into `next` — no allocation inside apply_step.
+            apply_step(&current, &rule, &mut next);
+            // Swap: `current` becomes the new state, `next` becomes free scratch.
+            std::mem::swap(&mut current, &mut next);
+            // `current` is the row we want to display; clone it for the channel.
+            // One allocation per step (4 kB), down from three.
+            if tx.send(SimRow { index: row, pixels: current.clone() }).is_err() {
+                return;
+            }
+        }
+        println!("simulation done in {:.2?}", t0.elapsed());
+    });
+    rx
+}
+
 struct CellularApp {
     receiver: mpsc::Receiver<SimRow>,
     image_buffer: Vec<egui::Color32>,
@@ -102,34 +143,21 @@ struct CellularApp {
     zoom: f32,
     pan: egui::Vec2,
     view_initialized: bool,
+    noise_slider: f64,
+    noise_atomic: Arc<AtomicU64>,
 }
 
 impl CellularApp {
     fn new(_cc: &eframe::CreationContext<'_>, sim_width: usize, sim_height: usize) -> Self {
-        let (tx, rx) = mpsc::channel::<SimRow>();
-
+        let noise_slider = 0.5f64;
+        let noise_atomic =
+            Arc::new(AtomicU64::new(noise_from_slider(noise_slider).to_bits()));
         let rule_no = rand::rng().random::<u64>();
-        let rn = rule_no as u128;
-
-        thread::spawn(move || {
-            let rule = Rule::new(rn, 6);
-            let mut arena = build_arena(sim_width, &[0, 1]);
-
-            if tx.send(SimRow { index: 0, pixels: arena.clone() }).is_err() {
-                return;
-            }
-
-            for row in 1..sim_height {
-                apply_noise(&mut arena, 0.0001);
-                arena = apply_step(&arena, &rule, 6);
-                if tx.send(SimRow { index: row, pixels: arena.clone() }).is_err() {
-                    return;
-                }
-            }
-        });
+        let receiver =
+            spawn_sim(rule_no, sim_width, sim_height, Arc::clone(&noise_atomic));
 
         CellularApp {
-            receiver: rx,
+            receiver,
             image_buffer: vec![egui::Color32::BLACK; sim_width * sim_height],
             rows_done: 0,
             texture: None,
@@ -139,14 +167,33 @@ impl CellularApp {
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
             view_initialized: false,
+            noise_slider,
+            noise_atomic,
         }
+    }
+
+    fn new_rule(&mut self) {
+        self.rule_no = rand::rng().random::<u64>();
+        self.receiver = spawn_sim(
+            self.rule_no,
+            self.sim_width,
+            self.sim_height,
+            Arc::clone(&self.noise_atomic),
+        );
+        self.image_buffer.fill(egui::Color32::BLACK);
+        self.rows_done = 0;
+        self.texture = None;
+        self.view_initialized = false;
     }
 }
 
 impl eframe::App for CellularApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let prev_rows = self.rows_done;
+        // Sync slider → atomic so the running sim thread sees changes immediately.
+        self.noise_atomic
+            .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
 
+        let prev_rows = self.rows_done;
         loop {
             match self.receiver.try_recv() {
                 Ok(msg) => {
@@ -175,15 +222,38 @@ impl eframe::App for CellularApp {
             }
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.label(format!(
-                "Rule: {}   {}/{} rows   zoom: {:.2}x",
-                self.rule_no, self.rows_done, self.sim_height, self.zoom
-            ));
+        egui::TopBottomPanel::top("controls").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "Rule: {}   {}/{} rows   zoom: {:.2}x",
+                    self.rule_no, self.rows_done, self.sim_height, self.zoom
+                ));
 
+                if ui.button("New Rule").clicked() {
+                    self.new_rule();
+                }
+
+                ui.separator();
+                ui.label("Noise:");
+                ui.add(
+                    egui::Slider::new(&mut self.noise_slider, 0.0f64..=1.0)
+                        .custom_formatter(|v, _| format!("{:.2e}", noise_from_slider(v)))
+                        .custom_parser(|s| {
+                            s.parse::<f64>().ok().and_then(|noise| {
+                                if noise > 0.0 {
+                                    Some(((noise.log10() + 7.0) / 6.0).clamp(0.0, 1.0))
+                                } else {
+                                    Some(0.0)
+                                }
+                            })
+                        }),
+                );
+            });
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
             let canvas = ui.available_rect_before_wrap();
 
-            // Fit the full expected image into the canvas on the first frame.
             if !self.view_initialized && canvas.width() > 10.0 && canvas.height() > 10.0 {
                 let sx = canvas.width() / self.sim_width as f32;
                 let sy = canvas.height() / self.sim_height as f32;
@@ -199,12 +269,10 @@ impl eframe::App for CellularApp {
 
             let response = ui.allocate_rect(canvas, egui::Sense::click_and_drag());
 
-            // Pan via drag.
             if response.dragged() {
                 self.pan += response.drag_delta();
             }
 
-            // Zoom via scroll, centered on cursor.
             let scroll = ctx.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 && response.hovered() {
                 let cursor = ctx
@@ -212,7 +280,6 @@ impl eframe::App for CellularApp {
                     .unwrap_or(canvas.center());
                 let cursor_local = cursor.to_vec2() - canvas.min.to_vec2();
                 let factor = (scroll * 0.001).exp();
-                // Keep the image pixel under the cursor fixed in screen space.
                 self.pan = cursor_local + (self.pan - cursor_local) * factor;
                 self.zoom = (self.zoom * factor).clamp(0.001, 500.0);
             }
