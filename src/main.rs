@@ -76,6 +76,16 @@ fn apply_noise(arena: &mut [u8], noise: f64) {
     }
 }
 
+// Nearest for magnification (zoom in stays pixel-perfect),
+// Linear for minification (zoom out is smooth).
+fn tex_options() -> egui::TextureOptions {
+    egui::TextureOptions {
+        magnification: egui::TextureFilter::Nearest,
+        minification: egui::TextureFilter::Linear,
+        ..Default::default()
+    }
+}
+
 struct SimRow {
     index: usize,
     pixels: Vec<u8>,
@@ -89,6 +99,9 @@ struct CellularApp {
     sim_width: usize,
     sim_height: usize,
     rule_no: u64,
+    zoom: f32,
+    pan: egui::Vec2,
+    view_initialized: bool,
 }
 
 impl CellularApp {
@@ -123,6 +136,9 @@ impl CellularApp {
             sim_width,
             sim_height,
             rule_no,
+            zoom: 1.0,
+            pan: egui::Vec2::ZERO,
+            view_initialized: false,
         }
     }
 }
@@ -150,32 +166,64 @@ impl eframe::App for CellularApp {
         if self.rows_done > prev_rows {
             let h = self.rows_done;
             let pixels = self.image_buffer[..self.sim_width * h].to_vec();
-            let image = egui::ColorImage {
-                size: [self.sim_width, h],
-                pixels,
-            };
+            let image = egui::ColorImage { size: [self.sim_width, h], pixels };
             match &mut self.texture {
-                Some(tex) => tex.set(image, egui::TextureOptions::NEAREST),
+                Some(tex) => tex.set(image, tex_options()),
                 None => {
-                    self.texture =
-                        Some(ctx.load_texture("sim", image, egui::TextureOptions::NEAREST));
+                    self.texture = Some(ctx.load_texture("sim", image, tex_options()));
                 }
             }
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.label(format!(
-                "Rule: {}   {}/{} rows",
-                self.rule_no, self.rows_done, self.sim_height
+                "Rule: {}   {}/{} rows   zoom: {:.2}x",
+                self.rule_no, self.rows_done, self.sim_height, self.zoom
             ));
 
+            let canvas = ui.available_rect_before_wrap();
+
+            // Fit the full expected image into the canvas on the first frame.
+            if !self.view_initialized && canvas.width() > 10.0 && canvas.height() > 10.0 {
+                let sx = canvas.width() / self.sim_width as f32;
+                let sy = canvas.height() / self.sim_height as f32;
+                self.zoom = sx.min(sy);
+                let iw = self.sim_width as f32 * self.zoom;
+                let ih = self.sim_height as f32 * self.zoom;
+                self.pan = egui::vec2(
+                    (canvas.width() - iw) * 0.5,
+                    (canvas.height() - ih) * 0.5,
+                );
+                self.view_initialized = true;
+            }
+
+            let response = ui.allocate_rect(canvas, egui::Sense::click_and_drag());
+
+            // Pan via drag.
+            if response.dragged() {
+                self.pan += response.drag_delta();
+            }
+
+            // Zoom via scroll, centered on cursor.
+            let scroll = ctx.input(|i| i.smooth_scroll_delta.y);
+            if scroll != 0.0 && response.hovered() {
+                let cursor = ctx
+                    .input(|i| i.pointer.hover_pos())
+                    .unwrap_or(canvas.center());
+                let cursor_local = cursor.to_vec2() - canvas.min.to_vec2();
+                let factor = (scroll * 0.001).exp();
+                // Keep the image pixel under the cursor fixed in screen space.
+                self.pan = cursor_local + (self.pan - cursor_local) * factor;
+                self.zoom = (self.zoom * factor).clamp(0.001, 500.0);
+            }
+
             if let Some(tex) = &self.texture {
-                let available = ui.available_size();
-                let img_w = self.sim_width as f32;
-                let img_h = self.rows_done as f32;
-                let scale = (available.x / img_w).min(available.y / img_h);
-                let display = egui::vec2(img_w * scale, img_h * scale);
-                ui.image((tex.id(), display));
+                let img_w = self.sim_width as f32 * self.zoom;
+                let img_h = self.rows_done as f32 * self.zoom;
+                let origin = (canvas.min.to_vec2() + self.pan).to_pos2();
+                let rect = egui::Rect::from_min_size(origin, egui::vec2(img_w, img_h));
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                ui.painter_at(canvas).image(tex.id(), rect, uv, egui::Color32::WHITE);
             }
         });
 
