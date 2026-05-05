@@ -10,6 +10,11 @@ use std::time::Instant;
 use crate::rule_editor;
 use crate::simulation::{spawn_sim, SimBatch, rule_lookup_from_no, noise_from_slider, parse_seed};
 
+fn wrapping_idx(i: isize, m: usize) -> usize {
+    ((i % m as isize + m as isize) % m as isize) as usize
+}
+
+
 pub struct CellularApp {
     pub receiver: mpsc::Receiver<SimBatch>,
     pub rows_done: usize,
@@ -96,9 +101,13 @@ impl CellularApp {
         self.rule_no = rand::rng().random::<u128>();
         self.rule_text = self.rule_no.to_string();
         self.rule_lookup = rule_lookup_from_no(self.rule_no);
+        self.clear_highlight();
+        self.restart_same_rule();
+    }
+
+    pub fn clear_highlight(&mut self) {
         self.highlighted_state = None;
         self.highlighted_cell = None;
-        self.restart_same_rule();
     }
 
     fn save_image(&mut self) {
@@ -183,8 +192,7 @@ impl eframe::App for CellularApp {
                             if let Ok(n) = self.rule_text.parse::<u128>() {
                                 self.rule_no = n;
                                 self.rule_lookup = rule_lookup_from_no(n);
-                                self.highlighted_state = None;
-                                self.highlighted_cell = None;
+                                self.clear_highlight();
                                 self.restart_same_rule();
                             } else {
                                 self.rule_text = self.rule_no.to_string();
@@ -215,8 +223,7 @@ impl eframe::App for CellularApp {
                     if ui.button(editor_label).clicked() {
                         self.show_rule_editor = !self.show_rule_editor;
                         if !self.show_rule_editor {
-                            self.highlighted_state = None;
-                            self.highlighted_cell = None;
+                            self.clear_highlight();
                         }
                     }
 
@@ -317,21 +324,18 @@ impl eframe::App for CellularApp {
                     if col < self.sim_width && row < self.sim_height {
                         if row > 0 {
                             let mut state = 0usize;
-                            let sim_w = self.sim_width as isize;
                             for di in -3isize..=3isize {
-                                let neighbor_col = ((col as isize + di) % sim_w + sim_w) % sim_w;
-                                let idx = (row - 1) * self.sim_width + neighbor_col as usize;
+                                let nc = wrapping_idx(col as isize + di, self.sim_width);
+                                let idx = (row - 1) * self.sim_width + nc;
                                 state = (state << 1) | (self.cells_data[idx] as usize);
                             }
                             self.highlighted_state = Some(state);
                             self.highlighted_cell = Some((col, row));
                         } else {
-                            self.highlighted_state = None;
-                            self.highlighted_cell = None;
+                            self.clear_highlight();
                         }
                     } else {
-                        self.highlighted_state = None;
-                        self.highlighted_cell = None;
+                        self.clear_highlight();
                     }
                 }
             }
@@ -349,10 +353,9 @@ impl eframe::App for CellularApp {
 
             if let Some((col, row)) = self.highlighted_cell {
                 if row > 0 && col < self.sim_width && row <= self.sim_height {
-                    let sim_w = self.sim_width as isize;
                     let z = self.zoom;
                     for di in -3isize..=3isize {
-                        let nc = ((col as isize + di) % sim_w + sim_w) % sim_w;
+                        let nc = wrapping_idx(col as isize + di, self.sim_width);
                         let nr = row - 1;
                         let cell_rect = egui::Rect::from_min_size(
                             egui::pos2(origin.x + nc as f32 * z, origin.y + nr as f32 * z),
