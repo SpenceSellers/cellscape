@@ -386,69 +386,74 @@ impl eframe::App for CellularApp {
             }
         }
 
-        egui::TopBottomPanel::top("controls").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "Rule: {}   {}/{} rows   zoom: {:.2}x",
-                    self.rule_no, self.rows_done, self.sim_height, self.zoom
-                ));
+        egui::SidePanel::left("controls")
+            .resizable(true)
+            .default_width(260.0)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label(format!(
+                        "Rule: {}   {}/{} rows   zoom: {:.2}x",
+                        self.rule_no, self.rows_done, self.sim_height, self.zoom
+                    ));
 
-                if ui.button("New Rule").clicked() {
-                    self.new_rule();
-                }
+                    ui.separator();
 
-                let editor_label = if self.show_rule_editor { "Close Editor" } else { "Edit Rule" };
-                if ui.button(editor_label).clicked() {
-                    self.show_rule_editor = !self.show_rule_editor;
-                }
+                    if ui.button("New Rule").clicked() {
+                        self.new_rule();
+                    }
 
-                ui.separator();
-                ui.label("Noise:");
-                let noise_resp = ui.add(
-                    egui::Slider::new(&mut self.noise_slider, 0.0f64..=1.0)
-                        .custom_formatter(|v, _| format!("{:.2e}", noise_from_slider(v)))
-                        .custom_parser(|s| {
-                            s.parse::<f64>().ok().and_then(|noise| {
-                                if noise > 0.0 {
-                                    Some(((noise.log10() + 7.0) / 6.0).clamp(0.0, 1.0))
-                                } else {
-                                    Some(0.0)
-                                }
-                            })
-                        }),
-                );
-                if noise_resp.changed() {
-                    // Sync atomic before spawning so the new thread starts with the right value.
-                    self.noise_atomic
-                        .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
-                    self.restart_same_rule();
-                }
+                    let editor_label = if self.show_rule_editor { "Close Editor" } else { "Edit Rule" };
+                    if ui.button(editor_label).clicked() {
+                        self.show_rule_editor = !self.show_rule_editor;
+                    }
 
-                ui.separator();
-                ui.label("Size:");
-                let size_resp = ui.add(
-                    egui::Slider::new(&mut self.sim_size, 100..=16000)
-                        .suffix("px")
-                        .integer(),
-                );
-                if size_resp.drag_stopped() || size_resp.lost_focus() {
-                    let new_size = self.sim_size;
-                    self.resize_and_restart(new_size);
-                }
+                    ui.separator();
+                    ui.label("Noise:");
+                    let noise_resp = ui.add(
+                        egui::Slider::new(&mut self.noise_slider, 0.0f64..=1.0)
+                            .custom_formatter(|v, _| format!("{:.2e}", noise_from_slider(v)))
+                            .custom_parser(|s| {
+                                s.parse::<f64>().ok().and_then(|noise| {
+                                    if noise > 0.0 {
+                                        Some(((noise.log10() + 7.0) / 6.0).clamp(0.0, 1.0))
+                                    } else {
+                                        Some(0.0)
+                                    }
+                                })
+                            }),
+                    );
+                    if noise_resp.changed() {
+                        // Sync atomic before spawning so the new thread starts with the right value.
+                        self.noise_atomic
+                            .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
+                        self.restart_same_rule();
+                    }
 
-                ui.separator();
-                ui.label("Seed:");
-                let seed_resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.seed_text).desired_width(140.0),
-                );
-                if seed_resp.lost_focus() {
-                    self.seed = parse_seed(&self.seed_text);
-                    // Normalize display back to the resolved number only if it was a plain number.
-                    // Leave arbitrary strings as-is so the user can see what they typed.
-                    self.restart_same_rule();
-                }
+                    ui.separator();
+                    ui.label("Size:");
+                    let size_resp = ui.add(
+                        egui::Slider::new(&mut self.sim_size, 100..=16000)
+                            .suffix("px")
+                            .integer(),
+                    );
+                    if size_resp.drag_stopped() || size_resp.lost_focus() {
+                        let new_size = self.sim_size;
+                        self.resize_and_restart(new_size);
+                    }
+
+                    ui.separator();
+                    ui.label("Seed:");
+                    let seed_resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.seed_text).desired_width(140.0),
+                    );
+                    if seed_resp.lost_focus() {
+                        self.seed = parse_seed(&self.seed_text);
+                        // Normalize display back to the resolved number only if it was a plain number.
+                        // Leave arbitrary strings as-is so the user can see what they typed.
+                        self.restart_same_rule();
+                    }
+                });
             });
-        });
 
         if self.show_rule_editor {
             egui::TopBottomPanel::bottom("rule_editor")
