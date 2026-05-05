@@ -83,6 +83,7 @@ impl CellularApp {
         self.receiver = spawn_sim(self.rule_no, size, size, Arc::clone(&self.noise_atomic), self.seed);
         self.rows_done = 0;
         self.texture = None;
+        self.cells_data = vec![0u8; size * size];
         self.view_initialized = false;
     }
 
