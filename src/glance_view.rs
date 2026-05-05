@@ -26,6 +26,7 @@ struct GlanceEntry {
 pub struct GalleryState {
     entries: Vec<GlanceEntry>,
     sim_size: usize,
+    prerun_size: usize, // How many steps to run simulation before actually showing the results
     render_scale: u32,
     cols: usize,
     title: &'static str,
@@ -37,6 +38,7 @@ impl GalleryState {
         GalleryState {
             entries: Vec::new(),
             sim_size: 80,
+            prerun_size: 80,
             render_scale: 2,
             cols: 8,
             title: "Glance View",
@@ -48,6 +50,7 @@ impl GalleryState {
         GalleryState {
             entries: Vec::new(),
             sim_size: 80,
+            prerun_size: 80,
             render_scale: 2,
             cols: 8,
             title: "Adjacent Rules",
@@ -70,7 +73,7 @@ pub fn enter_glance_view(state: &mut GalleryState) {
     for _ in 0..50 {
         let rule_no = rand::rng().random::<u128>();
         let seed = rand::rng().random::<u64>();
-        let pixels = compute_sim(rule_no, size, size, 0.0, seed);
+        let pixels = compute_sim(rule_no, size, size, 0.0, seed, state.prerun_size);
         state.entries.push(GlanceEntry { rule_no, seed, pixels, texture: None });
     }
 }
@@ -80,7 +83,7 @@ pub fn enter_adjacent_view(state: &mut GalleryState, base_rule: u128, seed: u64)
     state.entries.clear();
     for bit in 0..128u32 {
         let rule_no = base_rule ^ (1u128 << bit);
-        let pixels = compute_sim(rule_no, size, size, 0.0, seed);
+        let pixels = compute_sim(rule_no, size, size, 0.0, seed, state.prerun_size);
         state.entries.push(GlanceEntry { rule_no, seed, pixels, texture: None });
     }
 }
@@ -91,7 +94,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
     for entry in &mut state.entries {
         let tex_size = entry.pixels.len().isqrt();
         if tex_size != expected_size || entry.texture.is_none() {
-            entry.pixels = compute_sim(entry.rule_no, expected_size, expected_size, 0.0, entry.seed);
+            entry.pixels = compute_sim(entry.rule_no, expected_size, expected_size, 0.0, entry.seed, state.prerun_size);
             entry.texture = None;
         }
         if entry.texture.is_none() {

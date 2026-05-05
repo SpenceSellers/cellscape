@@ -133,18 +133,20 @@ pub fn spawn_sim(
     rx
 }
 
-pub fn compute_sim(rule_no: u128, sim_width: usize, sim_height: usize, noise: f64, seed: u64) -> Vec<u8> {
+pub fn compute_sim(rule_no: u128, sim_width: usize, sim_height: usize, noise: f64, seed: u64, prerun: usize) -> Vec<u8> {
     let rule = Rule::new(rule_no, 7);
     let mut current = build_arena(sim_width, &[0, 1], seed);
     let mut noise_rng = SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15);
     let mut next = vec![0u8; sim_width];
     let mut result = Vec::with_capacity(sim_width * sim_height);
     result.extend_from_slice(&current);
-    for _ in 1..sim_height {
+    for i in 1..(sim_height + prerun) {
         apply_noise(&mut current, noise, &mut noise_rng);
         apply_step(&current, &rule, &mut next);
         std::mem::swap(&mut current, &mut next);
-        result.extend_from_slice(&current);
+        if i > prerun {
+            result.extend_from_slice(&current);
+        }
     }
     result
 }
