@@ -1,5 +1,6 @@
 mod simulation;
 mod rule_editor;
+mod glance_view;
 mod gui;
 
 fn main() -> eframe::Result<()> {

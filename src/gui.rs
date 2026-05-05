@@ -7,26 +7,14 @@ use std::sync::{
 };
 use std::time::Instant;
 
+use crate::glance_view::{Screen, GlanceEntry, enter_glance_view, draw_glance_view};
 use crate::rule_editor;
-use crate::simulation::{spawn_sim, compute_sim, SimBatch, rule_lookup_from_no, noise_from_slider, parse_seed};
+use crate::simulation::{spawn_sim, SimBatch, rule_lookup_from_no, noise_from_slider, parse_seed};
 
 fn wrapping_idx(i: isize, m: usize) -> usize {
     ((i % m as isize + m as isize) % m as isize) as usize
 }
 
-
-#[derive(PartialEq)]
-pub(crate) enum Screen {
-    Main,
-    Glance,
-}
-
-pub(crate) struct GlanceEntry {
-    rule_no: u128,
-    seed: u64,
-    pixels: Vec<u8>,
-    texture: Option<egui::TextureHandle>,
-}
 
 pub struct CellularApp {
     pub receiver: mpsc::Receiver<SimBatch>,
@@ -142,101 +130,6 @@ impl CellularApp {
         }
         self.saved_at = Some(Instant::now());
     }
-
-    fn enter_glance_view(&mut self) {
-        let size = self.glance_sim_size;
-        self.glance_entries.clear();
-        for _ in 0..25 {
-            let rule_no = rand::rng().random::<u128>();
-            let seed = rand::rng().random::<u64>();
-            let pixels = compute_sim(rule_no, size, size, 0.0, seed);
-            self.glance_entries.push(GlanceEntry {
-                rule_no,
-                seed,
-                pixels,
-                texture: None,
-            });
-        }
-        self.current_screen = Screen::Glance;
-    }
-
-    fn glance_view(&mut self, ctx: &egui::Context) {
-        let size = self.glance_sim_size;
-        for entry in &mut self.glance_entries {
-            if entry.texture.is_none() {
-                let pixels: Vec<egui::Color32> = entry.pixels.iter()
-                    .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
-                    .collect();
-                let image = egui::ColorImage { size: [size, size], pixels };
-                let tex_name = format!("glance_{}", entry.rule_no);
-                entry.texture = Some(ctx.load_texture(tex_name, image, tex_options()));
-            }
-        }
-
-        let mut clicked: Option<(u128, u64)> = None;
-
-        egui::TopBottomPanel::top("glance_top").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Glance View");
-                if ui.button("Re-roll").clicked() {
-                    self.enter_glance_view();
-                }
-                if ui.button("Back to Main").clicked() {
-                    self.current_screen = Screen::Main;
-                }
-            });
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let avail = ui.available_rect_before_wrap();
-            let padding = 8.0;
-            let gap = 8.0;
-            let thumb_w = (avail.width() - padding * 2.0 - gap * 4.0) / 5.0;
-            let thumb_h = (avail.height() - padding * 2.0 - gap * 4.0) / 5.0;
-            let thumb_size = thumb_w.min(thumb_h);
-
-            let grid_start = egui::pos2(
-                avail.min.x + (avail.width() - thumb_size * 5.0 - gap * 4.0) / 2.0,
-                avail.min.y + (avail.height() - thumb_size * 5.0 - gap * 4.0) / 2.0,
-            );
-
-            for (i, entry) in self.glance_entries.iter().enumerate() {
-                let col = i % 5;
-                let row = i / 5;
-                let x = grid_start.x + col as f32 * (thumb_size + gap);
-                let y = grid_start.y + row as f32 * (thumb_size + gap);
-                let rect = egui::Rect::from_min_size(
-                    egui::pos2(x, y),
-                    egui::vec2(thumb_size, thumb_size),
-                );
-
-                let resp = ui.allocate_rect(rect, egui::Sense::click());
-                let painter = ui.painter_at(rect);
-
-                if let Some(tex) = &entry.texture {
-                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                    painter.image(tex.id(), rect, uv, egui::Color32::WHITE);
-                }
-
-                painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, egui::Color32::from_gray(100)));
-
-                if resp.clicked() {
-                    clicked = Some((entry.rule_no, entry.seed));
-                }
-            }
-        });
-
-        if let Some((rule_no, seed)) = clicked {
-            self.rule_no = rule_no;
-            self.rule_text = rule_no.to_string();
-            self.rule_lookup = rule_lookup_from_no(rule_no);
-            self.seed = seed;
-            self.seed_text = seed.to_string();
-            self.clear_highlight();
-            self.restart_same_rule();
-            self.current_screen = Screen::Main;
-        }
-    }
 }
 
 fn tex_options() -> egui::TextureOptions {
@@ -250,7 +143,7 @@ fn tex_options() -> egui::TextureOptions {
 impl eframe::App for CellularApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.current_screen == Screen::Glance {
-            return self.glance_view(ctx);
+            return draw_glance_view(self, ctx);
         }
 
         self.noise_atomic
@@ -333,7 +226,7 @@ impl eframe::App for CellularApp {
 
                     ui.separator();
                     if ui.button("Glance View").clicked() {
-                        self.enter_glance_view();
+                        enter_glance_view(self);
                     }
                     ui.separator();
 
