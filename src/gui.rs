@@ -252,8 +252,10 @@ impl eframe::App for CellularApp {
                     .unwrap_or(canvas.center());
                 let cursor_local = cursor.to_vec2() - canvas.min.to_vec2();
                 let factor = (scroll * 0.001).exp();
-                self.pan = cursor_local + (self.pan - cursor_local) * factor;
-                self.zoom = (self.zoom * factor).clamp(0.001, 500.0);
+                let new_zoom = (self.zoom * factor).clamp(0.001, 50.0);
+                let actual_factor = new_zoom / self.zoom;
+                self.pan = cursor_local + (self.pan - cursor_local) * actual_factor;
+                self.zoom = new_zoom;
             }
 
             if response.clicked() && self.show_rule_editor {
