@@ -130,6 +130,9 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
                 state.render_scale = scale;
             }
             ui.separator();
+            ui.label("Columns:");
+            ui.add(egui::Slider::new(&mut state.cols, 1..=20));
+            ui.separator();
             ui.label("Pre-run Steps:");
             let mut prerun = state.prerun_size;
             if ui.add(egui::Slider::new(&mut prerun, 0..=500)).changed() {
