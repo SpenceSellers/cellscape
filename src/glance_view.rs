@@ -88,7 +88,9 @@ pub fn draw_glance_view(state: &mut GlanceState, ctx: &egui::Context) -> GlanceA
     egui::TopBottomPanel::top("glance_top").show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.heading("Glance View");
-            if ui.button("Re-roll").clicked() {
+            if ui.button("Re-roll (E)").clicked()
+                || ui.input(|i| i.key_pressed(egui::Key::E))
+            {
                 enter_glance_view(state);
             }
             if ui.button("Back to Main").clicked() {
@@ -134,14 +136,23 @@ pub fn draw_glance_view(state: &mut GlanceState, ctx: &egui::Context) -> GlanceA
             );
 
             let resp = ui.allocate_rect(rect, egui::Sense::click());
-            let painter = ui.painter_at(rect);
+
+            let hover_scale = if resp.hovered() { 1.06 } else { 1.0 };
+            let display_rect = egui::Rect::from_center_size(rect.center(), rect.size() * hover_scale);
+
+            let painter = ui.painter_at(display_rect);
 
             if let Some(tex) = &entry.texture {
                 let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                painter.image(tex.id(), rect, uv, egui::Color32::WHITE);
+                painter.image(tex.id(), display_rect, uv, egui::Color32::WHITE);
             }
 
-            painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, egui::Color32::from_gray(100)));
+            let border_color = if resp.hovered() {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::from_gray(100)
+            };
+            painter.rect_stroke(display_rect, 1.0, egui::Stroke::new(2.0, border_color));
 
             if resp.clicked() {
                 action = GlanceAction::SelectRule(entry.rule_no, entry.seed);
