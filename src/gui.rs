@@ -16,7 +16,7 @@ pub struct CellularApp {
     pub sim_width: usize,
     pub sim_height: usize,
     pub sim_size: usize,
-    pub rule_no: u64,
+    pub rule_no: u128,
     pub rule_lookup: Vec<u8>,
     pub show_rule_editor: bool,
     pub seed: u64,
@@ -36,7 +36,7 @@ impl CellularApp {
         let noise_slider = 0.5f64;
         let noise_atomic =
             Arc::new(AtomicU64::new(noise_from_slider(noise_slider).to_bits()));
-        let rule_no = rand::rng().random::<u64>();
+        let rule_no = rand::rng().random::<u128>();
         let seed = rand::rng().random::<u64>();
         let receiver =
             spawn_sim(rule_no, sim_width, sim_height, Arc::clone(&noise_atomic), seed);
@@ -87,7 +87,7 @@ impl CellularApp {
     }
 
     pub fn new_rule(&mut self) {
-        self.rule_no = rand::rng().random::<u64>();
+        self.rule_no = rand::rng().random::<u128>();
         self.rule_lookup = rule_lookup_from_no(self.rule_no);
         self.highlighted_state = None;
         self.highlighted_cell = None;
@@ -216,7 +216,7 @@ impl eframe::App for CellularApp {
         if self.show_rule_editor {
             egui::TopBottomPanel::bottom("rule_editor")
                 .resizable(true)
-                .default_height(160.0)
+                .default_height(320.0)
                 .show(ctx, |ui| {
                     rule_editor::draw_rule_editor(self, ui);
                 });

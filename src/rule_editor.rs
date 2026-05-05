@@ -25,7 +25,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             let avail_w = ui.available_width();
             let cols = ((avail_w / tile_w) as usize).max(1).min(128);
-            let rows = (64 + cols - 1) / cols;
+            let rows = (128 + cols - 1) / cols;
 
             for row in 0..rows {
                 let (row_rect, _) = ui.allocate_exact_size(
@@ -36,7 +36,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
 
                 for col in 0..cols {
                     let state = row * cols + col;
-                    if state >= 64 { break; }
+                    if state >= 128 { break; }
 
                     let x0 = row_rect.min.x + col as f32 * tile_w;
                     let y0 = row_rect.min.y;
