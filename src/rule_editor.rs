@@ -24,8 +24,8 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
         .max_height(ui.available_height())
         .show(ui, |ui| {
             let avail_w = ui.available_width();
-            let cols = ((avail_w / tile_w) as usize).max(1).min(128);
-            let rows = (128 + cols - 1) / cols;
+            let cols = ((avail_w / tile_w) as usize).clamp(1, 128);
+            let rows = 128_usize.div_ceil(cols);
 
             for row in 0..rows {
                 let (row_rect, _) = ui.allocate_exact_size(

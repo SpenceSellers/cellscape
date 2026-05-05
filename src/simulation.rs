@@ -60,8 +60,8 @@ impl Rule {
 pub fn apply_step(arena: &[u8], rule: &Rule, out: &mut Vec<u8>) {
     let looped = Looped::new(arena);
     out.resize(arena.len(), 0);
-    for i in 0..arena.len() {
-        out[i] = rule.apply(&looped, i);
+    for (i, cell) in out.iter_mut().enumerate() {
+        *cell = rule.apply(&looped, i);
     }
 }
 

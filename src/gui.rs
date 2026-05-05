@@ -118,9 +118,8 @@ impl CellularApp {
         let ts = Local::now().format("%Y-%m-%dT%H-%M-%S");
         let path = format!("output/{}-{}.png", ts, self.rule_no);
         let pixels: Vec<u8> = self.cells_data.iter().map(|&v| v.saturating_mul(255)).collect();
-        match GrayImage::from_raw(self.sim_width as u32, self.sim_height as u32, pixels) {
-            Some(img) => { img.save(&path).ok(); }
-            None => {}
+        if let Some(img) = GrayImage::from_raw(self.sim_width as u32, self.sim_height as u32, pixels) {
+            img.save(&path).ok();
         }
         self.saved_at = Some(Instant::now());
     }
@@ -143,39 +142,34 @@ impl eframe::App for CellularApp {
             self.new_rule();
         }
 
-        loop {
-            match self.receiver.try_recv() {
-                Ok(batch) => {
-                    let count = batch.pixels.len() / self.sim_width;
-                    for (i, &v) in batch.pixels.iter().enumerate() {
-                        let row = batch.start + i / self.sim_width;
-                        let col = i % self.sim_width;
-                        self.cells_data[row * self.sim_width + col] = v;
-                    }
-                    let pixels: Vec<egui::Color32> = batch
-                        .pixels
-                        .iter()
-                        .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
-                        .collect();
-                    let partial = egui::ColorImage { size: [self.sim_width, count], pixels };
-                    match &mut self.texture {
-                        Some(tex) => {
-                            tex.set_partial([0, batch.start], partial, tex_options());
-                        }
-                        None => {
-                            let black = egui::ColorImage::new(
-                                [self.sim_width, self.sim_height],
-                                egui::Color32::BLACK,
-                            );
-                            let mut tex = ctx.load_texture("sim", black, tex_options());
-                            tex.set_partial([0, batch.start], partial, tex_options());
-                            self.texture = Some(tex);
-                        }
-                    }
-                    self.rows_done = self.rows_done.max(batch.start + count);
-                }
-                Err(_) => break,
+        while let Ok(batch) = self.receiver.try_recv() {
+            let count = batch.pixels.len() / self.sim_width;
+            for (i, &v) in batch.pixels.iter().enumerate() {
+                let row = batch.start + i / self.sim_width;
+                let col = i % self.sim_width;
+                self.cells_data[row * self.sim_width + col] = v;
             }
+            let pixels: Vec<egui::Color32> = batch
+                .pixels
+                .iter()
+                .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
+                .collect();
+            let partial = egui::ColorImage { size: [self.sim_width, count], pixels };
+            match &mut self.texture {
+                Some(tex) => {
+                    tex.set_partial([0, batch.start], partial, tex_options());
+                }
+                None => {
+                    let black = egui::ColorImage::new(
+                        [self.sim_width, self.sim_height],
+                        egui::Color32::BLACK,
+                    );
+                    let mut tex = ctx.load_texture("sim", black, tex_options());
+                    tex.set_partial([0, batch.start], partial, tex_options());
+                    self.texture = Some(tex);
+                }
+            }
+            self.rows_done = self.rows_done.max(batch.start + count);
         }
 
         egui::SidePanel::right("controls")
@@ -233,11 +227,11 @@ impl eframe::App for CellularApp {
                         egui::Slider::new(&mut self.noise_slider, 0.0f64..=1.0)
                             .custom_formatter(|v, _| format!("{:.2e}", noise_from_slider(v)))
                             .custom_parser(|s| {
-                                s.parse::<f64>().ok().and_then(|noise| {
+                                s.parse::<f64>().ok().map(|noise| {
                                     if noise > 0.0 {
-                                        Some(((noise.log10() + 7.0) / 6.0).clamp(0.0, 1.0))
+                                        ((noise.log10() + 7.0) / 6.0).clamp(0.0, 1.0)
                                     } else {
-                                        Some(0.0)
+                                        0.0
                                     }
                                 })
                             }),
