@@ -79,12 +79,13 @@ fn apply_step(arena: &[u8], rule: &Rule, out: &mut Vec<u8>) {
 }
 
 fn apply_noise(arena: &mut [u8], noise: f64, rng: &mut SmallRng) {
-    if noise <= 0.0 {
-        return;
-    }
+    // Always consume exactly 2 RNG values per cell so the flip set at any
+    // higher noise level is a strict superset of the set at any lower level.
     for cell in arena.iter_mut() {
-        if rng.random::<f64>() <= noise {
-            *cell = if rng.random::<bool>() { 1 } else { 0 };
+        let threshold: f64 = rng.random();
+        let new_val: u8 = rng.random::<bool>() as u8;
+        if threshold <= noise {
+            *cell = new_val;
         }
     }
 }
