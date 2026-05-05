@@ -25,6 +25,7 @@ struct GlanceEntry {
 pub struct GlanceState {
     entries: Vec<GlanceEntry>,
     sim_size: usize,
+    render_scale: u32,
 }
 
 impl GlanceState {
@@ -32,6 +33,7 @@ impl GlanceState {
         GlanceState {
             entries: Vec::new(),
             sim_size: 80,
+            render_scale: 2,
         }
     }
 }
@@ -45,7 +47,7 @@ fn tex_options() -> egui::TextureOptions {
 }
 
 pub fn enter_glance_view(state: &mut GlanceState) {
-    let size = state.sim_size;
+    let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
     for _ in 0..25 {
         let rule_no = rand::rng().random::<u128>();
@@ -62,12 +64,20 @@ pub fn enter_glance_view(state: &mut GlanceState) {
 
 pub fn draw_glance_view(state: &mut GlanceState, ctx: &egui::Context) -> GlanceAction {
     let size = state.sim_size;
+
+    // Re-render all entries if their texture resolution doesn't match current scale
     for entry in &mut state.entries {
+        let tex_size = entry.pixels.len().isqrt();
+        let expected_size = size * state.render_scale as usize;
+        if tex_size != expected_size || entry.texture.is_none() {
+            entry.pixels = compute_sim(entry.rule_no, expected_size, expected_size, 0.0, entry.seed);
+            entry.texture = None;
+        }
         if entry.texture.is_none() {
             let pixels: Vec<egui::Color32> = entry.pixels.iter()
                 .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
                 .collect();
-            let image = egui::ColorImage { size: [size, size], pixels };
+            let image = egui::ColorImage { size: [expected_size, expected_size], pixels };
             let tex_name = format!("glance_{}", entry.rule_no);
             entry.texture = Some(ctx.load_texture(tex_name, image, tex_options()));
         }
@@ -83,6 +93,19 @@ pub fn draw_glance_view(state: &mut GlanceState, ctx: &egui::Context) -> GlanceA
             }
             if ui.button("Back to Main").clicked() {
                 action = GlanceAction::Back;
+            }
+            ui.separator();
+            ui.label("Render Scale:");
+            let mut scale = state.render_scale as u32;
+            if ui
+                .add(egui::Slider::new(&mut scale, 1..=16).text("x"))
+                .changed()
+            {
+                state.render_scale = scale;
+                // re-render by resetting all textures
+                for entry in &mut state.entries {
+                    entry.texture = None;
+                }
             }
         });
     });
