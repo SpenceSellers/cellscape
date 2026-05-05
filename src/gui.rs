@@ -5,6 +5,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     mpsc,
 };
+use std::time::Instant;
 
 use crate::rule_editor;
 use crate::simulation::{spawn_sim, SimBatch, rule_lookup_from_no, noise_from_slider, parse_seed};
@@ -30,6 +31,7 @@ pub struct CellularApp {
     pub cells_data: Vec<u8>,
     pub highlighted_state: Option<usize>,
     pub highlighted_cell: Option<(usize, usize)>,
+    pub saved_at: Option<Instant>,
 }
 
 impl CellularApp {
@@ -64,6 +66,7 @@ impl CellularApp {
             cells_data: vec![0u8; sim_width * sim_height],
             highlighted_state: None,
             highlighted_cell: None,
+            saved_at: None,
         }
     }
 
@@ -96,6 +99,21 @@ impl CellularApp {
         self.highlighted_state = None;
         self.highlighted_cell = None;
         self.restart_same_rule();
+    }
+
+    fn save_image(&mut self) {
+        use chrono::Local;
+        use image::GrayImage;
+        use std::fs;
+        fs::create_dir_all("output").ok();
+        let ts = Local::now().format("%Y-%m-%dT%H-%M-%S");
+        let path = format!("output/{}-{}.png", ts, self.rule_no);
+        let pixels: Vec<u8> = self.cells_data.iter().map(|&v| v.saturating_mul(255)).collect();
+        match GrayImage::from_raw(self.sim_width as u32, self.sim_height as u32, pixels) {
+            Some(img) => { img.save(&path).ok(); }
+            None => {}
+        }
+        self.saved_at = Some(Instant::now());
     }
 }
 
@@ -180,6 +198,18 @@ impl eframe::App for CellularApp {
                     if ui.button("New Rule").clicked() {
                         self.new_rule();
                     }
+                    ui.horizontal(|ui| {
+                        if ui.button("Save PNG").clicked() {
+                            self.save_image();
+                        }
+                        if let Some(t) = self.saved_at {
+                            if t.elapsed() < std::time::Duration::from_secs(2) {
+                                ui.label("Saved!");
+                            } else {
+                                self.saved_at = None;
+                            }
+                        }
+                    });
 
                     let editor_label = if self.show_rule_editor { "Close Editor" } else { "Edit Rule" };
                     if ui.button(editor_label).clicked() {
