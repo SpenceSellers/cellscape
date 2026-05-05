@@ -7,7 +7,7 @@ use std::sync::{
 };
 use std::time::Instant;
 
-use crate::glance_view::{Screen, GlanceEntry, enter_glance_view, draw_glance_view};
+use crate::glance_view::{Screen, GlanceState, GlanceAction, enter_glance_view, draw_glance_view};
 use crate::rule_editor;
 use crate::simulation::{spawn_sim, SimBatch, rule_lookup_from_no, noise_from_slider, parse_seed};
 
@@ -39,8 +39,7 @@ pub struct CellularApp {
     pub highlighted_cell: Option<(usize, usize)>,
     pub saved_at: Option<Instant>,
     pub current_screen: Screen,
-    pub glance_entries: Vec<GlanceEntry>,
-    pub glance_sim_size: usize,
+    pub glance_state: GlanceState,
 }
 
 impl CellularApp {
@@ -77,8 +76,7 @@ impl CellularApp {
             highlighted_cell: None,
             saved_at: None,
             current_screen: Screen::Main,
-            glance_entries: Vec::new(),
-            glance_sim_size: 80,
+            glance_state: GlanceState::new(),
         }
     }
 
@@ -143,7 +141,23 @@ fn tex_options() -> egui::TextureOptions {
 impl eframe::App for CellularApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.current_screen == Screen::Glance {
-            return draw_glance_view(self, ctx);
+            match draw_glance_view(&mut self.glance_state, ctx) {
+                GlanceAction::SelectRule(rule_no, seed) => {
+                    self.rule_no = rule_no;
+                    self.rule_text = rule_no.to_string();
+                    self.rule_lookup = rule_lookup_from_no(rule_no);
+                    self.seed = seed;
+                    self.seed_text = seed.to_string();
+                    self.clear_highlight();
+                    self.restart_same_rule();
+                    self.current_screen = Screen::Main;
+                }
+                GlanceAction::Back => {
+                    self.current_screen = Screen::Main;
+                }
+                GlanceAction::None => {}
+            }
+            return;
         }
 
         self.noise_atomic
@@ -226,7 +240,8 @@ impl eframe::App for CellularApp {
 
                     ui.separator();
                     if ui.button("Glance View").clicked() {
-                        enter_glance_view(self);
+                        enter_glance_view(&mut self.glance_state);
+                        self.current_screen = Screen::Glance;
                     }
                     ui.separator();
 

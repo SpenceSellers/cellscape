@@ -1,8 +1,7 @@
 use eframe::egui;
 use rand::Rng;
 
-use crate::gui::CellularApp;
-use crate::simulation::{compute_sim, rule_lookup_from_no};
+use crate::simulation::compute_sim;
 
 #[derive(PartialEq)]
 pub enum Screen {
@@ -10,11 +9,31 @@ pub enum Screen {
     Glance,
 }
 
-pub struct GlanceEntry {
-    pub rule_no: u128,
-    pub seed: u64,
-    pub pixels: Vec<u8>,
-    pub texture: Option<egui::TextureHandle>,
+pub enum GlanceAction {
+    None,
+    SelectRule(u128, u64),
+    Back,
+}
+
+struct GlanceEntry {
+    rule_no: u128,
+    seed: u64,
+    pixels: Vec<u8>,
+    texture: Option<egui::TextureHandle>,
+}
+
+pub struct GlanceState {
+    entries: Vec<GlanceEntry>,
+    sim_size: usize,
+}
+
+impl GlanceState {
+    pub fn new() -> Self {
+        GlanceState {
+            entries: Vec::new(),
+            sim_size: 80,
+        }
+    }
 }
 
 fn tex_options() -> egui::TextureOptions {
@@ -25,26 +44,25 @@ fn tex_options() -> egui::TextureOptions {
     }
 }
 
-pub fn enter_glance_view(app: &mut CellularApp) {
-    let size = app.glance_sim_size;
-    app.glance_entries.clear();
+pub fn enter_glance_view(state: &mut GlanceState) {
+    let size = state.sim_size;
+    state.entries.clear();
     for _ in 0..25 {
         let rule_no = rand::rng().random::<u128>();
         let seed = rand::rng().random::<u64>();
         let pixels = compute_sim(rule_no, size, size, 0.0, seed);
-        app.glance_entries.push(GlanceEntry {
+        state.entries.push(GlanceEntry {
             rule_no,
             seed,
             pixels,
             texture: None,
         });
     }
-    app.current_screen = Screen::Glance;
 }
 
-pub fn draw_glance_view(app: &mut CellularApp, ctx: &egui::Context) {
-    let size = app.glance_sim_size;
-    for entry in &mut app.glance_entries {
+pub fn draw_glance_view(state: &mut GlanceState, ctx: &egui::Context) -> GlanceAction {
+    let size = state.sim_size;
+    for entry in &mut state.entries {
         if entry.texture.is_none() {
             let pixels: Vec<egui::Color32> = entry.pixels.iter()
                 .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
@@ -55,16 +73,16 @@ pub fn draw_glance_view(app: &mut CellularApp, ctx: &egui::Context) {
         }
     }
 
-    let mut clicked: Option<(u128, u64)> = None;
+    let mut action = GlanceAction::None;
 
     egui::TopBottomPanel::top("glance_top").show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.heading("Glance View");
             if ui.button("Re-roll").clicked() {
-                enter_glance_view(app);
+                enter_glance_view(state);
             }
             if ui.button("Back to Main").clicked() {
-                app.current_screen = Screen::Main;
+                action = GlanceAction::Back;
             }
         });
     });
@@ -82,7 +100,7 @@ pub fn draw_glance_view(app: &mut CellularApp, ctx: &egui::Context) {
             avail.min.y + (avail.height() - thumb_size * 5.0 - gap * 4.0) / 2.0,
         );
 
-        for (i, entry) in app.glance_entries.iter().enumerate() {
+        for (i, entry) in state.entries.iter().enumerate() {
             let col = i % 5;
             let row = i / 5;
             let x = grid_start.x + col as f32 * (thumb_size + gap);
@@ -103,19 +121,10 @@ pub fn draw_glance_view(app: &mut CellularApp, ctx: &egui::Context) {
             painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, egui::Color32::from_gray(100)));
 
             if resp.clicked() {
-                clicked = Some((entry.rule_no, entry.seed));
+                action = GlanceAction::SelectRule(entry.rule_no, entry.seed);
             }
         }
     });
 
-    if let Some((rule_no, seed)) = clicked {
-        app.rule_no = rule_no;
-        app.rule_text = rule_no.to_string();
-        app.rule_lookup = rule_lookup_from_no(rule_no);
-        app.seed = seed;
-        app.seed_text = seed.to_string();
-        app.clear_highlight();
-        app.restart_same_rule();
-        app.current_screen = Screen::Main;
-    }
+    action
 }
