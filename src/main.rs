@@ -163,10 +163,8 @@ fn spawn_sim(
 
 struct CellularApp {
     receiver: mpsc::Receiver<SimBatch>,
-    image_buffer: Vec<egui::Color32>,
     rows_done: usize,
     texture: Option<egui::TextureHandle>,
-    old_texture: Option<egui::TextureHandle>,
     sim_width: usize,
     sim_height: usize,
     sim_size: usize,
@@ -195,10 +193,8 @@ impl CellularApp {
 
         CellularApp {
             receiver,
-            image_buffer: vec![egui::Color32::BLACK; sim_width * sim_height],
             rows_done: 0,
             texture: None,
-            old_texture: None,
             sim_size: sim_width,
             sim_width,
             sim_height,
@@ -223,19 +219,15 @@ impl CellularApp {
             Arc::clone(&self.noise_atomic),
             self.seed,
         );
-        self.image_buffer.fill(egui::Color32::BLACK);
         self.rows_done = 0;
-        self.old_texture = self.texture.take();
     }
 
     fn resize_and_restart(&mut self, size: usize) {
         self.sim_size = size;
         self.sim_width = size;
         self.sim_height = size;
-        self.image_buffer = vec![egui::Color32::BLACK; size * size];
         self.receiver = spawn_sim(self.rule_no, size, size, Arc::clone(&self.noise_atomic), self.seed);
         self.rows_done = 0;
-        self.old_texture = None;
         self.texture = None;
         self.view_initialized = false;
     }
@@ -364,35 +356,33 @@ impl eframe::App for CellularApp {
             self.new_rule();
         }
 
-        let prev_rows = self.rows_done;
         loop {
             match self.receiver.try_recv() {
                 Ok(batch) => {
                     let count = batch.pixels.len() / self.sim_width;
-                    for r in 0..count {
-                        let row = batch.start + r;
-                        let src = r * self.sim_width;
-                        let dst = row * self.sim_width;
-                        for (col, &val) in batch.pixels[src..src + self.sim_width].iter().enumerate() {
-                            self.image_buffer[dst + col] =
-                                egui::Color32::from_gray(val.saturating_mul(255));
+                    let pixels: Vec<egui::Color32> = batch
+                        .pixels
+                        .iter()
+                        .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
+                        .collect();
+                    let partial = egui::ColorImage { size: [self.sim_width, count], pixels };
+                    match &mut self.texture {
+                        Some(tex) => {
+                            tex.set_partial([0, batch.start], partial, tex_options());
+                        }
+                        None => {
+                            let black = egui::ColorImage::new(
+                                [self.sim_width, self.sim_height],
+                                egui::Color32::BLACK,
+                            );
+                            let mut tex = ctx.load_texture("sim", black, tex_options());
+                            tex.set_partial([0, batch.start], partial, tex_options());
+                            self.texture = Some(tex);
                         }
                     }
                     self.rows_done = self.rows_done.max(batch.start + count);
                 }
                 Err(_) => break,
-            }
-        }
-
-        if self.rows_done > prev_rows {
-            let h = self.rows_done;
-            let pixels = self.image_buffer[..self.sim_width * h].to_vec();
-            let image = egui::ColorImage { size: [self.sim_width, h], pixels };
-            match &mut self.texture {
-                Some(tex) => tex.set(image, tex_options()),
-                None => {
-                    self.texture = Some(ctx.load_texture("sim", image, tex_options()));
-                }
             }
         }
 
@@ -507,22 +497,12 @@ impl eframe::App for CellularApp {
             let img_w = self.sim_width as f32 * self.zoom;
             let origin = (canvas.min.to_vec2() + self.pan).to_pos2();
 
-            if let Some(old_tex) = &self.old_texture {
-                let old_h = self.sim_height as f32 * self.zoom;
-                let old_rect = egui::Rect::from_min_size(origin, egui::vec2(img_w, old_h));
-                painter.image(old_tex.id(), old_rect, full_uv, egui::Color32::WHITE);
-            }
-
             if let Some(tex) = &self.texture {
-                let img_h = self.rows_done as f32 * self.zoom;
+                let img_h = self.sim_height as f32 * self.zoom;
                 let rect = egui::Rect::from_min_size(origin, egui::vec2(img_w, img_h));
                 painter.image(tex.id(), rect, full_uv, egui::Color32::WHITE);
             }
         });
-
-        if self.rows_done >= self.sim_height {
-            self.old_texture = None;
-        }
 
         if self.rows_done < self.sim_height {
             ctx.request_repaint();
