@@ -7,7 +7,7 @@ use std::sync::{
 };
 use std::time::Instant;
 
-use crate::glance_view::{Screen, GlanceState, GlanceAction, enter_glance_view, draw_glance_view};
+use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
 use crate::rule_editor;
 use crate::simulation::{spawn_sim, SimBatch, rule_lookup_from_no, noise_from_slider, parse_seed};
 
@@ -39,7 +39,8 @@ pub struct CellularApp {
     pub highlighted_cell: Option<(usize, usize)>,
     pub saved_at: Option<Instant>,
     pub current_screen: Screen,
-    pub glance_state: GlanceState,
+    pub glance_state: GalleryState,
+    pub adjacent_state: GalleryState,
 }
 
 impl CellularApp {
@@ -76,7 +77,8 @@ impl CellularApp {
             highlighted_cell: None,
             saved_at: None,
             current_screen: Screen::Main,
-            glance_state: GlanceState::new(),
+            glance_state: GalleryState::new_glance(),
+            adjacent_state: GalleryState::new_adjacent(),
         }
     }
 
@@ -140,8 +142,13 @@ fn tex_options() -> egui::TextureOptions {
 
 impl eframe::App for CellularApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.current_screen == Screen::Glance {
-            match draw_glance_view(&mut self.glance_state, ctx) {
+        if self.current_screen != Screen::Main {
+            let action = match self.current_screen {
+                Screen::Glance => draw_gallery(&mut self.glance_state, ctx),
+                Screen::Adjacent => draw_gallery(&mut self.adjacent_state, ctx),
+                Screen::Main => unreachable!(),
+            };
+            match action {
                 GlanceAction::SelectRule(rule_no, seed) => {
                     self.rule_no = rule_no;
                     self.rule_text = rule_no.to_string();
@@ -242,6 +249,10 @@ impl eframe::App for CellularApp {
                     if ui.button("Glance View").clicked() {
                         enter_glance_view(&mut self.glance_state);
                         self.current_screen = Screen::Glance;
+                    }
+                    if ui.button("Adjacent Rules").clicked() {
+                        enter_adjacent_view(&mut self.adjacent_state, self.rule_no, self.seed);
+                        self.current_screen = Screen::Adjacent;
                     }
                     ui.separator();
 

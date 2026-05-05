@@ -7,6 +7,7 @@ use crate::simulation::compute_sim;
 pub enum Screen {
     Main,
     Glance,
+    Adjacent,
 }
 
 pub enum GlanceAction {
@@ -22,18 +23,35 @@ struct GlanceEntry {
     texture: Option<egui::TextureHandle>,
 }
 
-pub struct GlanceState {
+pub struct GalleryState {
     entries: Vec<GlanceEntry>,
     sim_size: usize,
     render_scale: u32,
+    cols: usize,
+    title: &'static str,
+    allow_reroll: bool,
 }
 
-impl GlanceState {
-    pub fn new() -> Self {
-        GlanceState {
+impl GalleryState {
+    pub fn new_glance() -> Self {
+        GalleryState {
             entries: Vec::new(),
             sim_size: 80,
             render_scale: 2,
+            cols: 8,
+            title: "Glance View",
+            allow_reroll: true,
+        }
+    }
+
+    pub fn new_adjacent() -> Self {
+        GalleryState {
+            entries: Vec::new(),
+            sim_size: 80,
+            render_scale: 2,
+            cols: 8,
+            title: "Adjacent Rules",
+            allow_reroll: false,
         }
     }
 }
@@ -46,29 +64,32 @@ fn tex_options() -> egui::TextureOptions {
     }
 }
 
-pub fn enter_glance_view(state: &mut GlanceState) {
+pub fn enter_glance_view(state: &mut GalleryState) {
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
-    for _ in 0..25 {
+    for _ in 0..50 {
         let rule_no = rand::rng().random::<u128>();
         let seed = rand::rng().random::<u64>();
         let pixels = compute_sim(rule_no, size, size, 0.0, seed);
-        state.entries.push(GlanceEntry {
-            rule_no,
-            seed,
-            pixels,
-            texture: None,
-        });
+        state.entries.push(GlanceEntry { rule_no, seed, pixels, texture: None });
     }
 }
 
-pub fn draw_glance_view(state: &mut GlanceState, ctx: &egui::Context) -> GlanceAction {
-    let size = state.sim_size;
+pub fn enter_adjacent_view(state: &mut GalleryState, base_rule: u128, seed: u64) {
+    let size = state.sim_size * state.render_scale as usize;
+    state.entries.clear();
+    for bit in 0..128u32 {
+        let rule_no = base_rule ^ (1u128 << bit);
+        let pixels = compute_sim(rule_no, size, size, 0.0, seed);
+        state.entries.push(GlanceEntry { rule_no, seed, pixels, texture: None });
+    }
+}
 
-    // Re-render all entries if their texture resolution doesn't match current scale
+pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceAction {
+    let expected_size = state.sim_size * state.render_scale as usize;
+
     for entry in &mut state.entries {
         let tex_size = entry.pixels.len().isqrt();
-        let expected_size = size * state.render_scale as usize;
         if tex_size != expected_size || entry.texture.is_none() {
             entry.pixels = compute_sim(entry.rule_no, expected_size, expected_size, 0.0, entry.seed);
             entry.texture = None;
@@ -78,18 +99,19 @@ pub fn draw_glance_view(state: &mut GlanceState, ctx: &egui::Context) -> GlanceA
                 .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
                 .collect();
             let image = egui::ColorImage { size: [expected_size, expected_size], pixels };
-            let tex_name = format!("glance_{}", entry.rule_no);
+            let tex_name = format!("gallery_{}_{}", entry.rule_no, entry.seed);
             entry.texture = Some(ctx.load_texture(tex_name, image, tex_options()));
         }
     }
 
     let mut action = GlanceAction::None;
 
-    egui::TopBottomPanel::top("glance_top").show(ctx, |ui| {
+    egui::TopBottomPanel::top("gallery_top").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.heading("Glance View");
-            if ui.button("Re-roll (E)").clicked()
-                || ui.input(|i| i.key_pressed(egui::Key::E))
+            ui.heading(state.title);
+            if state.allow_reroll
+                && (ui.button("Re-roll (E)").clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::E)))
             {
                 enter_glance_view(state);
             }
@@ -98,13 +120,9 @@ pub fn draw_glance_view(state: &mut GlanceState, ctx: &egui::Context) -> GlanceA
             }
             ui.separator();
             ui.label("Render Scale:");
-            let mut scale = state.render_scale as u32;
-            if ui
-                .add(egui::Slider::new(&mut scale, 1..=16).text("x"))
-                .changed()
-            {
+            let mut scale = state.render_scale;
+            if ui.add(egui::Slider::new(&mut scale, 1..=16).text("x")).changed() {
                 state.render_scale = scale;
-                // re-render by resetting all textures
                 for entry in &mut state.entries {
                     entry.texture = None;
                 }
@@ -113,50 +131,58 @@ pub fn draw_glance_view(state: &mut GlanceState, ctx: &egui::Context) -> GlanceA
     });
 
     egui::CentralPanel::default().show(ctx, |ui| {
-        let avail = ui.available_rect_before_wrap();
-        let padding = 8.0;
+        let cols = state.cols;
         let gap = 8.0;
-        let thumb_w = (avail.width() - padding * 2.0 - gap * 4.0) / 5.0;
-        let thumb_h = (avail.height() - padding * 2.0 - gap * 4.0) / 5.0;
-        let thumb_size = thumb_w.min(thumb_h);
 
-        let grid_start = egui::pos2(
-            avail.min.x + (avail.width() - thumb_size * 5.0 - gap * 4.0) / 2.0,
-            avail.min.y + (avail.height() - thumb_size * 5.0 - gap * 4.0) / 2.0,
-        );
+        let mut clicked_idx: Option<usize> = None;
 
-        for (i, entry) in state.entries.iter().enumerate() {
-            let col = i % 5;
-            let row = i / 5;
-            let x = grid_start.x + col as f32 * (thumb_size + gap);
-            let y = grid_start.y + row as f32 * (thumb_size + gap);
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(x, y),
-                egui::vec2(thumb_size, thumb_size),
-            );
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let avail_width = ui.available_width();
+            let thumb_size = (avail_width - gap * (cols - 1) as f32) / cols as f32;
+            ui.spacing_mut().item_spacing = egui::vec2(gap, gap);
 
-            let resp = ui.allocate_rect(rect, egui::Sense::click());
-
-            let hover_scale = if resp.hovered() { 1.06 } else { 1.0 };
-            let display_rect = egui::Rect::from_center_size(rect.center(), rect.size() * hover_scale);
-
-            let painter = ui.painter_at(display_rect);
-
-            if let Some(tex) = &entry.texture {
-                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                painter.image(tex.id(), display_rect, uv, egui::Color32::WHITE);
+            for (row_idx, chunk) in state.entries.chunks(cols).enumerate() {
+                ui.horizontal(|ui| {
+                    for (j, entry) in chunk.iter().enumerate() {
+                        let resp = ui.allocate_response(
+                            egui::vec2(thumb_size, thumb_size),
+                            egui::Sense::click(),
+                        );
+                        let rect = resp.rect;
+                        let hover_scale = if resp.hovered() { 1.06 } else { 1.0 };
+                        let display_rect = egui::Rect::from_center_size(
+                            rect.center(),
+                            rect.size() * hover_scale,
+                        );
+                        let painter = ui.painter_at(display_rect);
+                        if let Some(tex) = &entry.texture {
+                            let uv = egui::Rect::from_min_max(
+                                egui::pos2(0.0, 0.0),
+                                egui::pos2(1.0, 1.0),
+                            );
+                            painter.image(tex.id(), display_rect, uv, egui::Color32::WHITE);
+                        }
+                        let border_color = if resp.hovered() {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::from_gray(100)
+                        };
+                        painter.rect_stroke(
+                            display_rect,
+                            1.0,
+                            egui::Stroke::new(2.0, border_color),
+                        );
+                        if resp.clicked() {
+                            clicked_idx = Some(row_idx * cols + j);
+                        }
+                    }
+                });
             }
+        });
 
-            let border_color = if resp.hovered() {
-                egui::Color32::WHITE
-            } else {
-                egui::Color32::from_gray(100)
-            };
-            painter.rect_stroke(display_rect, 1.0, egui::Stroke::new(2.0, border_color));
-
-            if resp.clicked() {
-                action = GlanceAction::SelectRule(entry.rule_no, entry.seed);
-            }
+        if let Some(idx) = clicked_idx {
+            let entry = &state.entries[idx];
+            action = GlanceAction::SelectRule(entry.rule_no, entry.seed);
         }
     });
 
