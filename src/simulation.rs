@@ -76,7 +76,7 @@ pub fn apply_noise(arena: &mut [u8], noise: f64, rng: &mut SmallRng) {
 }
 
 pub fn noise_from_slider(s: f64) -> f64 {
-    10f64.powf(s * 6.0 - 7.0)
+    if s <= 0.0 { 0.0 } else { 10f64.powf(s * 6.0 - 7.0) }
 }
 
 pub const BATCH_SIZE: usize = 10;

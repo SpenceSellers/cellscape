@@ -229,9 +229,6 @@ impl eframe::App for CellularApp {
 
                     ui.separator();
 
-                    if ui.button("New Rule").clicked() {
-                        self.new_rule();
-                    }
                     ui.horizontal(|ui| {
                         if ui.button("Save PNG").clicked() {
                             self.save_image();
@@ -246,11 +243,11 @@ impl eframe::App for CellularApp {
                     });
 
                     ui.separator();
-                    if ui.button("Glance View").clicked() {
+                    if ui.button("Explore random rules").clicked() {
                         enter_glance_view(&mut self.glance_state);
                         self.current_screen = Screen::Glance;
                     }
-                    if ui.button("Adjacent Rules").clicked() {
+                    if ui.button("Explore adjacent rules").clicked() {
                         enter_adjacent_view(&mut self.adjacent_state, self.rule_no, self.seed);
                         self.current_screen = Screen::Adjacent;
                     }
@@ -268,7 +265,10 @@ impl eframe::App for CellularApp {
                     ui.label("Noise:");
                     let noise_resp = ui.add(
                         egui::Slider::new(&mut self.noise_slider, 0.0f64..=1.0)
-                            .custom_formatter(|v, _| format!("{:.2e}", noise_from_slider(v)))
+                            .custom_formatter(|v, _| {
+                            let n = noise_from_slider(v);
+                            if n == 0.0 { "0".to_string() } else { format!("{:.2e}", n) }
+                        })
                             .custom_parser(|s| {
                                 s.parse::<f64>().ok().map(|noise| {
                                     if noise > 0.0 {
