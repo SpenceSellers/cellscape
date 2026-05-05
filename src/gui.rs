@@ -184,6 +184,10 @@ impl eframe::App for CellularApp {
                     let editor_label = if self.show_rule_editor { "Close Editor" } else { "Edit Rule" };
                     if ui.button(editor_label).clicked() {
                         self.show_rule_editor = !self.show_rule_editor;
+                        if !self.show_rule_editor {
+                            self.highlighted_state = None;
+                            self.highlighted_cell = None;
+                        }
                     }
 
                     ui.separator();
