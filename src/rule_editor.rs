@@ -108,6 +108,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
     if let Some(state) = clicked {
         app.rule_lookup[state] = 1 - app.rule_lookup[state];
         app.rule_no = rule_no_from_lookup(&app.rule_lookup);
+        app.rule_text = app.rule_no.to_string();
         app.restart_same_rule();
     }
 }

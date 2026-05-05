@@ -17,6 +17,7 @@ pub struct CellularApp {
     pub sim_height: usize,
     pub sim_size: usize,
     pub rule_no: u128,
+    pub rule_text: String,
     pub rule_lookup: Vec<u8>,
     pub show_rule_editor: bool,
     pub seed: u64,
@@ -50,6 +51,7 @@ impl CellularApp {
             sim_width,
             sim_height,
             rule_no,
+            rule_text: rule_no.to_string(),
             rule_lookup,
             show_rule_editor: false,
             seed,
@@ -89,6 +91,7 @@ impl CellularApp {
 
     pub fn new_rule(&mut self) {
         self.rule_no = rand::rng().random::<u128>();
+        self.rule_text = self.rule_no.to_string();
         self.rule_lookup = rule_lookup_from_no(self.rule_no);
         self.highlighted_state = None;
         self.highlighted_cell = None;
@@ -153,10 +156,24 @@ impl eframe::App for CellularApp {
             .default_width(260.0)
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
-                    ui.label(format!(
-                        "Rule: {}   {}/{} rows   zoom: {:.2}x",
-                        self.rule_no, self.rows_done, self.sim_height, self.zoom
-                    ));
+                    ui.horizontal(|ui| {
+                        ui.label("Rule:");
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.rule_text).desired_width(220.0),
+                        );
+                        if resp.lost_focus() {
+                            if let Ok(n) = self.rule_text.parse::<u128>() {
+                                self.rule_no = n;
+                                self.rule_lookup = rule_lookup_from_no(n);
+                                self.highlighted_state = None;
+                                self.highlighted_cell = None;
+                                self.restart_same_rule();
+                            } else {
+                                self.rule_text = self.rule_no.to_string();
+                            }
+                        }
+                    });
+                    ui.label(format!("{}/{} rows   zoom: {:.2}x", self.rows_done, self.sim_height, self.zoom));
 
                     ui.separator();
 
