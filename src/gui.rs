@@ -1,0 +1,261 @@
+use eframe::egui;
+use rand::Rng;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+    mpsc,
+};
+
+use crate::rule_editor;
+use crate::simulation::{spawn_sim, SimBatch, rule_lookup_from_no, noise_from_slider, parse_seed};
+
+pub struct CellularApp {
+    pub receiver: mpsc::Receiver<SimBatch>,
+    pub rows_done: usize,
+    pub texture: Option<egui::TextureHandle>,
+    pub sim_width: usize,
+    pub sim_height: usize,
+    pub sim_size: usize,
+    pub rule_no: u64,
+    pub rule_lookup: Vec<u8>,
+    pub show_rule_editor: bool,
+    pub seed: u64,
+    pub seed_text: String,
+    pub zoom: f32,
+    pub pan: egui::Vec2,
+    pub view_initialized: bool,
+    pub noise_slider: f64,
+    pub noise_atomic: Arc<AtomicU64>,
+}
+
+impl CellularApp {
+    pub fn new(_cc: &eframe::CreationContext<'_>, sim_width: usize, sim_height: usize) -> Self {
+        let noise_slider = 0.5f64;
+        let noise_atomic =
+            Arc::new(AtomicU64::new(noise_from_slider(noise_slider).to_bits()));
+        let rule_no = rand::rng().random::<u64>();
+        let seed = rand::rng().random::<u64>();
+        let receiver =
+            spawn_sim(rule_no, sim_width, sim_height, Arc::clone(&noise_atomic), seed);
+        let rule_lookup = rule_lookup_from_no(rule_no);
+
+        CellularApp {
+            receiver,
+            rows_done: 0,
+            texture: None,
+            sim_size: sim_width,
+            sim_width,
+            sim_height,
+            rule_no,
+            rule_lookup,
+            show_rule_editor: false,
+            seed,
+            seed_text: seed.to_string(),
+            zoom: 1.0,
+            pan: egui::Vec2::ZERO,
+            view_initialized: false,
+            noise_slider,
+            noise_atomic,
+        }
+    }
+
+    pub fn restart_same_rule(&mut self) {
+        self.receiver = spawn_sim(
+            self.rule_no,
+            self.sim_width,
+            self.sim_height,
+            Arc::clone(&self.noise_atomic),
+            self.seed,
+        );
+        self.rows_done = 0;
+    }
+
+    pub fn resize_and_restart(&mut self, size: usize) {
+        self.sim_size = size;
+        self.sim_width = size;
+        self.sim_height = size;
+        self.receiver = spawn_sim(self.rule_no, size, size, Arc::clone(&self.noise_atomic), self.seed);
+        self.rows_done = 0;
+        self.texture = None;
+        self.view_initialized = false;
+    }
+
+    pub fn new_rule(&mut self) {
+        self.rule_no = rand::rng().random::<u64>();
+        self.rule_lookup = rule_lookup_from_no(self.rule_no);
+        self.restart_same_rule();
+    }
+}
+
+fn tex_options() -> egui::TextureOptions {
+    egui::TextureOptions {
+        magnification: egui::TextureFilter::Nearest,
+        minification: egui::TextureFilter::Linear,
+        ..Default::default()
+    }
+}
+
+impl eframe::App for CellularApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.noise_atomic
+            .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
+
+        if ctx.input(|i| i.key_pressed(egui::Key::N)) {
+            self.new_rule();
+        }
+
+        loop {
+            match self.receiver.try_recv() {
+                Ok(batch) => {
+                    let count = batch.pixels.len() / self.sim_width;
+                    let pixels: Vec<egui::Color32> = batch
+                        .pixels
+                        .iter()
+                        .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
+                        .collect();
+                    let partial = egui::ColorImage { size: [self.sim_width, count], pixels };
+                    match &mut self.texture {
+                        Some(tex) => {
+                            tex.set_partial([0, batch.start], partial, tex_options());
+                        }
+                        None => {
+                            let black = egui::ColorImage::new(
+                                [self.sim_width, self.sim_height],
+                                egui::Color32::BLACK,
+                            );
+                            let mut tex = ctx.load_texture("sim", black, tex_options());
+                            tex.set_partial([0, batch.start], partial, tex_options());
+                            self.texture = Some(tex);
+                        }
+                    }
+                    self.rows_done = self.rows_done.max(batch.start + count);
+                }
+                Err(_) => break,
+            }
+        }
+
+        egui::SidePanel::right("controls")
+            .resizable(true)
+            .default_width(260.0)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label(format!(
+                        "Rule: {}   {}/{} rows   zoom: {:.2}x",
+                        self.rule_no, self.rows_done, self.sim_height, self.zoom
+                    ));
+
+                    ui.separator();
+
+                    if ui.button("New Rule").clicked() {
+                        self.new_rule();
+                    }
+
+                    let editor_label = if self.show_rule_editor { "Close Editor" } else { "Edit Rule" };
+                    if ui.button(editor_label).clicked() {
+                        self.show_rule_editor = !self.show_rule_editor;
+                    }
+
+                    ui.separator();
+                    ui.label("Noise:");
+                    let noise_resp = ui.add(
+                        egui::Slider::new(&mut self.noise_slider, 0.0f64..=1.0)
+                            .custom_formatter(|v, _| format!("{:.2e}", noise_from_slider(v)))
+                            .custom_parser(|s| {
+                                s.parse::<f64>().ok().and_then(|noise| {
+                                    if noise > 0.0 {
+                                        Some(((noise.log10() + 7.0) / 6.0).clamp(0.0, 1.0))
+                                    } else {
+                                        Some(0.0)
+                                    }
+                                })
+                            }),
+                    );
+                    if noise_resp.changed() {
+                        self.noise_atomic
+                            .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
+                        self.restart_same_rule();
+                    }
+
+                    ui.separator();
+                    ui.label("Size:");
+                    let size_resp = ui.add(
+                        egui::Slider::new(&mut self.sim_size, 100..=16000)
+                            .suffix("px")
+                            .integer(),
+                    );
+                    if size_resp.drag_stopped() || size_resp.lost_focus() {
+                        let new_size = self.sim_size;
+                        self.resize_and_restart(new_size);
+                    }
+
+                    ui.separator();
+                    ui.label("Seed:");
+                    let seed_resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.seed_text).desired_width(140.0),
+                    );
+                    if seed_resp.lost_focus() {
+                        self.seed = parse_seed(&self.seed_text);
+                        self.restart_same_rule();
+                    }
+                });
+            });
+
+        if self.show_rule_editor {
+            egui::TopBottomPanel::bottom("rule_editor")
+                .resizable(true)
+                .default_height(160.0)
+                .show(ctx, |ui| {
+                    rule_editor::draw_rule_editor(self, ui);
+                });
+        }
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let canvas = ui.available_rect_before_wrap();
+
+            if !self.view_initialized && canvas.width() > 10.0 && canvas.height() > 10.0 {
+                let sx = canvas.width() / self.sim_width as f32;
+                let sy = canvas.height() / self.sim_height as f32;
+                self.zoom = sx.min(sy);
+                let iw = self.sim_width as f32 * self.zoom;
+                let ih = self.sim_height as f32 * self.zoom;
+                self.pan = egui::vec2(
+                    (canvas.width() - iw) * 0.5,
+                    (canvas.height() - ih) * 0.5,
+                );
+                self.view_initialized = true;
+            }
+
+            let response = ui.allocate_rect(canvas, egui::Sense::click_and_drag());
+
+            if response.dragged() {
+                self.pan += response.drag_delta();
+            }
+
+            let scroll = ctx.input(|i| i.smooth_scroll_delta.y);
+            if scroll != 0.0 && response.hovered() {
+                let cursor = ctx
+                    .input(|i| i.pointer.hover_pos())
+                    .unwrap_or(canvas.center());
+                let cursor_local = cursor.to_vec2() - canvas.min.to_vec2();
+                let factor = (scroll * 0.001).exp();
+                self.pan = cursor_local + (self.pan - cursor_local) * factor;
+                self.zoom = (self.zoom * factor).clamp(0.001, 500.0);
+            }
+
+            let painter = ui.painter_at(canvas);
+            let full_uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            let img_w = self.sim_width as f32 * self.zoom;
+            let origin = (canvas.min.to_vec2() + self.pan).to_pos2();
+
+            if let Some(tex) = &self.texture {
+                let img_h = self.sim_height as f32 * self.zoom;
+                let rect = egui::Rect::from_min_size(origin, egui::vec2(img_w, img_h));
+                painter.image(tex.id(), rect, full_uv, egui::Color32::WHITE);
+            }
+        });
+
+        if self.rows_done < self.sim_height {
+            ctx.request_repaint();
+        }
+    }
+}
