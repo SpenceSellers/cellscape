@@ -541,6 +541,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "1D Cellular Automata",
         native_options,
-        Box::new(|cc| Ok(Box::new(CellularApp::new(cc, 4000, 4000)))),
+        Box::new(|cc| Ok(Box::new(CellularApp::new(cc, 2000, 2000)))),
     )
 }
