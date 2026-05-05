@@ -386,7 +386,7 @@ impl eframe::App for CellularApp {
             }
         }
 
-        egui::SidePanel::left("controls")
+        egui::SidePanel::right("controls")
             .resizable(true)
             .default_width(260.0)
             .show(ctx, |ui| {
