@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::simulation::rule_no_from_lookup;
+use crate::simulation::rule_string_from_lookup;
 use crate::gui::CellularApp;
 
 pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
@@ -14,7 +14,13 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
     let tile_w = nbr_w + pat_gap;
     let tile_h = cell_sz + out_gap + cell_sz;
 
-    ui.label(egui::RichText::new("Rule editor — click an output cell to toggle it").small());
+    let total_patterns = app.num_states.pow(7);
+    let max_editor = if app.num_states >= 5 { 2048 } else { total_patterns };
+
+    ui.label(egui::RichText::new("Rule editor — click an output cell to cycle its state").small());
+    if app.num_states >= 5 {
+        ui.label(egui::RichText::new(format!("Showing first {} of {} patterns", max_editor, total_patterns)).small().color(egui::Color32::GRAY));
+    }
     ui.separator();
 
     let mut clicked: Option<usize> = None;
@@ -24,8 +30,8 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
         .max_height(ui.available_height())
         .show(ui, |ui| {
             let avail_w = ui.available_width();
-            let cols = ((avail_w / tile_w) as usize).clamp(1, 128);
-            let rows = 128_usize.div_ceil(cols);
+            let cols = ((avail_w / tile_w) as usize).clamp(1, total_patterns);
+            let rows = max_editor.div_ceil(cols);
 
             for row in 0..rows {
                 let (row_rect, _) = ui.allocate_exact_size(
@@ -36,7 +42,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
 
                 for col in 0..cols {
                     let state = row * cols + col;
-                    if state >= 128 { break; }
+                    if state >= max_editor { break; }
 
                     let x0 = row_rect.min.x + col as f32 * tile_w;
                     let y0 = row_rect.min.y;
@@ -57,14 +63,13 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                     }
 
                     for bit_pos in 0..nbr_cells {
-                        let bit_idx = nbr_cells - 1 - bit_pos;
-                        let alive = (state >> bit_idx) & 1 == 1;
+                        let digit = (state / app.num_states.pow((nbr_cells - 1 - bit_pos) as u32)) % app.num_states;
                         let x = x0 + bit_pos as f32 * (cell_sz + cell_gap);
                         let r = egui::Rect::from_min_size(
                             egui::pos2(x, y0),
                             egui::vec2(cell_sz, cell_sz),
                         );
-                        let fill = if alive { egui::Color32::WHITE } else { egui::Color32::BLACK };
+                        let fill = app.state_palette[digit];
                         painter.rect_filled(r, 1.0, fill);
                         let border = if bit_pos == 3 {
                             egui::Color32::from_rgb(80, 130, 220)
@@ -81,7 +86,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                         egui::vec2(cell_sz, cell_sz),
                     );
                     let output = app.rule_lookup[state];
-                    let fill = if output == 1 { egui::Color32::WHITE } else { egui::Color32::BLACK };
+                    let fill = app.state_palette[output as usize];
                     painter.rect_filled(out_rect, 1.0, fill);
                     painter.rect_stroke(out_rect, 1.0, egui::Stroke::new(1.0, egui::Color32::from_gray(140)));
 
@@ -106,9 +111,9 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
         });
 
     if let Some(state) = clicked {
-        app.rule_lookup[state] = 1 - app.rule_lookup[state];
-        app.rule_no = rule_no_from_lookup(&app.rule_lookup);
-        app.rule_text = app.rule_no.to_string();
+        let v = app.rule_lookup[state];
+        app.rule_lookup[state] = ((v as usize + 1) % app.num_states) as u8;
+        app.rule_text = rule_string_from_lookup(&app.rule_lookup);
         app.restart_same_rule();
     }
 }

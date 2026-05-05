@@ -1,7 +1,7 @@
 use eframe::egui;
 use rand::Rng;
 
-use crate::simulation::compute_sim;
+use crate::simulation::{compute_sim, random_rule_lookup, rule_string_from_lookup};
 
 #[derive(PartialEq)]
 pub enum Screen {
@@ -12,22 +12,37 @@ pub enum Screen {
 
 pub enum GlanceAction {
     None,
-    SelectRule(u128, u64),
+    SelectRule(Vec<u8>, usize, u64),
     Back,
 }
 
 struct GlanceEntry {
-    rule_no: u128,
+    lookup: Vec<u8>,
+    num_states: usize,
     seed: u64,
     pixels: Vec<u8>,
     texture: Option<egui::TextureHandle>,
     dirty: bool,
 }
 
+fn palette_for(num_states: usize) -> Vec<egui::Color32> {
+    let colors: &[egui::Color32] = &[
+        egui::Color32::BLACK,
+        egui::Color32::WHITE,
+        egui::Color32::from_rgb(200, 50, 50),
+        egui::Color32::from_rgb(60, 100, 220),
+        egui::Color32::from_rgb(50, 180, 80),
+        egui::Color32::from_rgb(220, 180, 40),
+        egui::Color32::from_rgb(50, 200, 200),
+        egui::Color32::from_rgb(200, 80, 200),
+    ];
+    colors[..num_states.min(colors.len())].to_vec()
+}
+
 pub struct GalleryState {
     entries: Vec<GlanceEntry>,
     sim_size: usize,
-    prerun_size: usize, // How many steps to run simulation before actually showing the results
+    prerun_size: usize,
     render_scale: u32,
     cols: usize,
     title: &'static str,
@@ -70,22 +85,25 @@ fn tex_options() -> egui::TextureOptions {
 
 pub fn enter_glance_view(state: &mut GalleryState) {
     let size = state.sim_size * state.render_scale as usize;
+    let num_states = 2usize;
     state.entries.clear();
     for _ in 0..50 {
-        let rule_no = rand::rng().random::<u128>();
+        let lookup = random_rule_lookup(num_states, &mut rand::rng());
         let seed = rand::rng().random::<u64>();
-        let pixels = compute_sim(rule_no, size, size, 0.0, seed, state.prerun_size);
-        state.entries.push(GlanceEntry { rule_no, seed, pixels, texture: None, dirty: false });
+        let pixels = compute_sim(&lookup, num_states, size, size, 0.0, seed, state.prerun_size);
+        state.entries.push(GlanceEntry { lookup, num_states, seed, pixels, texture: None, dirty: false });
     }
 }
 
-pub fn enter_adjacent_view(state: &mut GalleryState, base_rule: u128, seed: u64) {
+pub fn enter_adjacent_view(state: &mut GalleryState, base_lookup: &[u8], num_states: usize, seed: u64) {
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
-    for bit in 0..128u32 {
-        let rule_no = base_rule ^ (1u128 << bit);
-        let pixels = compute_sim(rule_no, size, size, 0.0, seed, state.prerun_size);
-        state.entries.push(GlanceEntry { rule_no, seed, pixels, texture: None, dirty: false });
+    let n_entries = num_states.pow(7).min(512);
+    for entry_idx in 0..n_entries {
+        let mut lookup = base_lookup.to_vec();
+        lookup[entry_idx] = (lookup[entry_idx] + 1) % num_states as u8;
+        let pixels = compute_sim(&lookup, num_states, size, size, 0.0, seed, state.prerun_size);
+        state.entries.push(GlanceEntry { lookup, num_states, seed, pixels, texture: None, dirty: false });
     }
 }
 
@@ -95,16 +113,17 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
     for entry in &mut state.entries {
         let tex_size = entry.pixels.len().isqrt();
         if tex_size != expected_size || entry.texture.is_none() || entry.dirty {
-            entry.pixels = compute_sim(entry.rule_no, expected_size, expected_size, 0.0, entry.seed, state.prerun_size);
+            entry.pixels = compute_sim(&entry.lookup, entry.num_states, expected_size, expected_size, 0.0, entry.seed, state.prerun_size);
             entry.dirty = false;
             entry.texture = None;
         }
         if entry.texture.is_none() {
+            let palette = palette_for(entry.num_states);
             let pixels: Vec<egui::Color32> = entry.pixels.iter()
-                .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
+                .map(|&v| palette[v as usize])
                 .collect();
             let image = egui::ColorImage { size: [expected_size, expected_size], pixels };
-            let tex_name = format!("gallery_{}_{}", entry.rule_no, entry.seed);
+            let tex_name = format!("gallery_{}_{}", rule_string_from_lookup(&entry.lookup), entry.seed);
             entry.texture = Some(ctx.load_texture(tex_name, image, tex_options()));
         }
     }
@@ -196,7 +215,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
 
         if let Some(idx) = clicked_idx {
             let entry = &state.entries[idx];
-            action = GlanceAction::SelectRule(entry.rule_no, entry.seed);
+            action = GlanceAction::SelectRule(entry.lookup.clone(), entry.num_states, entry.seed);
         }
     });
 

@@ -9,10 +9,24 @@ use std::time::Instant;
 
 use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
 use crate::rule_editor;
-use crate::simulation::{spawn_sim, SimBatch, rule_lookup_from_no, noise_from_slider, parse_seed};
+use crate::simulation::{spawn_sim, SimBatch, noise_from_slider, parse_seed, rule_string_from_lookup, rule_lookup_from_string, random_rule_lookup};
 
 fn wrapping_idx(i: isize, m: usize) -> usize {
     ((i % m as isize + m as isize) % m as isize) as usize
+}
+
+pub fn build_palette(num_states: usize) -> Vec<egui::Color32> {
+    let colors: &[egui::Color32] = &[
+        egui::Color32::BLACK,
+        egui::Color32::WHITE,
+        egui::Color32::from_rgb(200, 50, 50),
+        egui::Color32::from_rgb(60, 100, 220),
+        egui::Color32::from_rgb(50, 180, 80),
+        egui::Color32::from_rgb(220, 180, 40),
+        egui::Color32::from_rgb(50, 200, 200),
+        egui::Color32::from_rgb(200, 80, 200),
+    ];
+    colors[..num_states.min(colors.len())].to_vec()
 }
 
 
@@ -23,9 +37,10 @@ pub struct CellularApp {
     pub sim_width: usize,
     pub sim_height: usize,
     pub sim_size: usize,
-    pub rule_no: u128,
+    pub num_states: usize,
     pub rule_text: String,
     pub rule_lookup: Vec<u8>,
+    pub state_palette: Vec<egui::Color32>,
     pub show_rule_editor: bool,
     pub seed: u64,
     pub seed_text: String,
@@ -48,11 +63,13 @@ impl CellularApp {
         let noise_slider = 0.5f64;
         let noise_atomic =
             Arc::new(AtomicU64::new(noise_from_slider(noise_slider).to_bits()));
-        let rule_no = rand::rng().random::<u128>();
+        let num_states = 2usize;
+        let rule_lookup = random_rule_lookup(num_states, &mut rand::rng());
+        let rule_text = rule_string_from_lookup(&rule_lookup);
         let seed = rand::rng().random::<u64>();
         let receiver =
-            spawn_sim(rule_no, sim_width, sim_height, Arc::clone(&noise_atomic), seed);
-        let rule_lookup = rule_lookup_from_no(rule_no);
+            spawn_sim(rule_lookup.clone(), num_states, sim_width, sim_height, Arc::clone(&noise_atomic), seed);
+        let state_palette = build_palette(num_states);
 
         CellularApp {
             receiver,
@@ -61,9 +78,10 @@ impl CellularApp {
             sim_size: sim_width,
             sim_width,
             sim_height,
-            rule_no,
-            rule_text: rule_no.to_string(),
+            num_states,
+            rule_text,
             rule_lookup,
+            state_palette,
             show_rule_editor: false,
             seed,
             seed_text: seed.to_string(),
@@ -84,7 +102,8 @@ impl CellularApp {
 
     pub fn restart_same_rule(&mut self) {
         self.receiver = spawn_sim(
-            self.rule_no,
+            self.rule_lookup.clone(),
+            self.num_states,
             self.sim_width,
             self.sim_height,
             Arc::clone(&self.noise_atomic),
@@ -97,7 +116,7 @@ impl CellularApp {
         self.sim_size = size;
         self.sim_width = size;
         self.sim_height = size;
-        self.receiver = spawn_sim(self.rule_no, size, size, Arc::clone(&self.noise_atomic), self.seed);
+        self.receiver = spawn_sim(self.rule_lookup.clone(), self.num_states, size, size, Arc::clone(&self.noise_atomic), self.seed);
         self.rows_done = 0;
         self.texture = None;
         self.cells_data = vec![0u8; size * size];
@@ -105,9 +124,17 @@ impl CellularApp {
     }
 
     pub fn new_rule(&mut self) {
-        self.rule_no = rand::rng().random::<u128>();
-        self.rule_text = self.rule_no.to_string();
-        self.rule_lookup = rule_lookup_from_no(self.rule_no);
+        self.rule_lookup = random_rule_lookup(self.num_states, &mut rand::rng());
+        self.rule_text = rule_string_from_lookup(&self.rule_lookup);
+        self.clear_highlight();
+        self.restart_same_rule();
+    }
+
+    pub fn change_num_states(&mut self, new_k: usize) {
+        self.num_states = new_k;
+        self.state_palette = build_palette(new_k);
+        self.rule_lookup = random_rule_lookup(new_k, &mut rand::rng());
+        self.rule_text = rule_string_from_lookup(&self.rule_lookup);
         self.clear_highlight();
         self.restart_same_rule();
     }
@@ -119,13 +146,19 @@ impl CellularApp {
 
     fn save_image(&mut self) {
         use chrono::Local;
-        use image::GrayImage;
+        use image::RgbImage;
         use std::fs;
         fs::create_dir_all("output").ok();
         let ts = Local::now().format("%Y-%m-%dT%H-%M-%S");
-        let path = format!("output/{}-{}.png", ts, self.rule_no);
-        let pixels: Vec<u8> = self.cells_data.iter().map(|&v| v.saturating_mul(255)).collect();
-        if let Some(img) = GrayImage::from_raw(self.sim_width as u32, self.sim_height as u32, pixels) {
+        let rule_prefix: String = self.rule_text.chars().take(16).collect();
+        let path = format!("output/{}-{}_k{}.png", ts, rule_prefix, self.num_states);
+        let w = self.sim_width as u32;
+        let h = self.sim_height as u32;
+        let pixels: Vec<u8> = self.cells_data.iter().flat_map(|&v| {
+            let c = self.state_palette[v as usize];
+            [c.r(), c.g(), c.b()]
+        }).collect();
+        if let Some(img) = RgbImage::from_raw(w, h, pixels) {
             img.save(&path).ok();
         }
         self.saved_at = Some(Instant::now());
@@ -149,10 +182,11 @@ impl eframe::App for CellularApp {
                 Screen::Main => unreachable!(),
             };
             match action {
-                GlanceAction::SelectRule(rule_no, seed) => {
-                    self.rule_no = rule_no;
-                    self.rule_text = rule_no.to_string();
-                    self.rule_lookup = rule_lookup_from_no(rule_no);
+                GlanceAction::SelectRule(lookup, num_states, seed) => {
+                    self.rule_lookup = lookup;
+                    self.num_states = num_states;
+                    self.state_palette = build_palette(num_states);
+                    self.rule_text = rule_string_from_lookup(&self.rule_lookup);
                     self.seed = seed;
                     self.seed_text = seed.to_string();
                     self.clear_highlight();
@@ -184,7 +218,7 @@ impl eframe::App for CellularApp {
             let pixels: Vec<egui::Color32> = batch
                 .pixels
                 .iter()
-                .map(|&v| egui::Color32::from_gray(v.saturating_mul(255)))
+                .map(|&v| self.state_palette[v as usize])
                 .collect();
             let partial = egui::ColorImage { size: [self.sim_width, count], pixels };
             match &mut self.texture {
@@ -209,19 +243,26 @@ impl eframe::App for CellularApp {
             .default_width(260.0)
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
+                    ui.label("States:");
+                    let states_resp = ui.add(
+                        egui::Slider::new(&mut self.num_states, 2..=8).integer(),
+                    );
+                    if states_resp.changed() {
+                        self.change_num_states(self.num_states);
+                    }
+
                     ui.horizontal(|ui| {
                         ui.label("Rule:");
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.rule_text).desired_width(220.0),
                         );
                         if resp.lost_focus() {
-                            if let Ok(n) = self.rule_text.parse::<u128>() {
-                                self.rule_no = n;
-                                self.rule_lookup = rule_lookup_from_no(n);
+                            if let Some(lookup) = rule_lookup_from_string(&self.rule_text, self.num_states) {
+                                self.rule_lookup = lookup;
                                 self.clear_highlight();
                                 self.restart_same_rule();
                             } else {
-                                self.rule_text = self.rule_no.to_string();
+                                self.rule_text = rule_string_from_lookup(&self.rule_lookup);
                             }
                         }
                     });
@@ -248,7 +289,7 @@ impl eframe::App for CellularApp {
                         self.current_screen = Screen::Glance;
                     }
                     if ui.button("Explore adjacent rules").clicked() {
-                        enter_adjacent_view(&mut self.adjacent_state, self.rule_no, self.seed);
+                        enter_adjacent_view(&mut self.adjacent_state, &self.rule_lookup, self.num_states, self.seed);
                         self.current_screen = Screen::Adjacent;
                     }
                     ui.separator();
@@ -364,7 +405,7 @@ impl eframe::App for CellularApp {
                             for di in -3isize..=3isize {
                                 let nc = wrapping_idx(col as isize + di, self.sim_width);
                                 let idx = (row - 1) * self.sim_width + nc;
-                                state = (state << 1) | (self.cells_data[idx] as usize);
+                                state = state * self.num_states + self.cells_data[idx] as usize;
                             }
                             self.highlighted_state = Some(state);
                             self.highlighted_cell = Some((col, row));
