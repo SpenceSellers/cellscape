@@ -24,7 +24,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
         .max_height(ui.available_height())
         .show(ui, |ui| {
             let avail_w = ui.available_width();
-            let cols = ((avail_w / tile_w) as usize).max(1).min(64);
+            let cols = ((avail_w / tile_w) as usize).max(1).min(128);
             let rows = (64 + cols - 1) / cols;
 
             for row in 0..rows {
@@ -41,6 +41,21 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                     let x0 = row_rect.min.x + col as f32 * tile_w;
                     let y0 = row_rect.min.y;
 
+                    if app.highlighted_state == Some(state) {
+                        let tile_rect = egui::Rect::from_min_size(
+                            egui::pos2(x0 - 2.0, y0 - 2.0),
+                            egui::vec2(nbr_w + 4.0, tile_h + 4.0),
+                        );
+                        painter.rect_filled(
+                            tile_rect, 3.0,
+                            egui::Color32::from_rgb(255, 200, 50),
+                        );
+                        painter.rect_stroke(
+                            tile_rect, 3.0,
+                            egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 200, 50)),
+                        );
+                    }
+
                     for bit_pos in 0..nbr_cells {
                         let bit_idx = nbr_cells - 1 - bit_pos;
                         let alive = (state >> bit_idx) & 1 == 1;
@@ -49,7 +64,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                             egui::pos2(x, y0),
                             egui::vec2(cell_sz, cell_sz),
                         );
-                        let fill = if alive { egui::Color32::WHITE } else { egui::Color32::from_gray(35) };
+                        let fill = if alive { egui::Color32::WHITE } else { egui::Color32::BLACK };
                         painter.rect_filled(r, 1.0, fill);
                         let border = if bit_pos == 3 {
                             egui::Color32::from_rgb(80, 130, 220)
@@ -66,7 +81,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                         egui::vec2(cell_sz, cell_sz),
                     );
                     let output = app.rule_lookup[state];
-                    let fill = if output == 1 { egui::Color32::WHITE } else { egui::Color32::from_gray(35) };
+                    let fill = if output == 1 { egui::Color32::WHITE } else { egui::Color32::BLACK };
                     painter.rect_filled(out_rect, 1.0, fill);
                     painter.rect_stroke(out_rect, 1.0, egui::Stroke::new(1.0, egui::Color32::from_gray(140)));
 

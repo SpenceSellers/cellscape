@@ -26,6 +26,9 @@ pub struct CellularApp {
     pub view_initialized: bool,
     pub noise_slider: f64,
     pub noise_atomic: Arc<AtomicU64>,
+    pub cells_data: Vec<u8>,
+    pub highlighted_state: Option<usize>,
+    pub highlighted_cell: Option<(usize, usize)>,
 }
 
 impl CellularApp {
@@ -56,6 +59,9 @@ impl CellularApp {
             view_initialized: false,
             noise_slider,
             noise_atomic,
+            cells_data: vec![0u8; sim_width * sim_height],
+            highlighted_state: None,
+            highlighted_cell: None,
         }
     }
 
@@ -83,6 +89,8 @@ impl CellularApp {
     pub fn new_rule(&mut self) {
         self.rule_no = rand::rng().random::<u64>();
         self.rule_lookup = rule_lookup_from_no(self.rule_no);
+        self.highlighted_state = None;
+        self.highlighted_cell = None;
         self.restart_same_rule();
     }
 }
@@ -108,6 +116,11 @@ impl eframe::App for CellularApp {
             match self.receiver.try_recv() {
                 Ok(batch) => {
                     let count = batch.pixels.len() / self.sim_width;
+                    for (i, &v) in batch.pixels.iter().enumerate() {
+                        let row = batch.start + i / self.sim_width;
+                        let col = i % self.sim_width;
+                        self.cells_data[row * self.sim_width + col] = v;
+                    }
                     let pixels: Vec<egui::Color32> = batch
                         .pixels
                         .iter()
@@ -242,6 +255,33 @@ impl eframe::App for CellularApp {
                 self.zoom = (self.zoom * factor).clamp(0.001, 500.0);
             }
 
+            if response.clicked() && self.show_rule_editor {
+                if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+                    let local = (pos.to_vec2() - canvas.min.to_vec2() - self.pan) / self.zoom;
+                    let col = local.x as usize;
+                    let row = local.y as usize;
+                    if col < self.sim_width && row < self.sim_height {
+                        if row > 0 {
+                            let mut state = 0usize;
+                            let sim_w = self.sim_width as isize;
+                            for di in -3isize..=3isize {
+                                let neighbor_col = ((col as isize + di) % sim_w + sim_w) % sim_w;
+                                let idx = (row - 1) * self.sim_width + neighbor_col as usize;
+                                state = (state << 1) | (self.cells_data[idx] as usize);
+                            }
+                            self.highlighted_state = Some(state);
+                            self.highlighted_cell = Some((col, row));
+                        } else {
+                            self.highlighted_state = None;
+                            self.highlighted_cell = None;
+                        }
+                    } else {
+                        self.highlighted_state = None;
+                        self.highlighted_cell = None;
+                    }
+                }
+            }
+
             let painter = ui.painter_at(canvas);
             let full_uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
             let img_w = self.sim_width as f32 * self.zoom;
@@ -251,6 +291,35 @@ impl eframe::App for CellularApp {
                 let img_h = self.sim_height as f32 * self.zoom;
                 let rect = egui::Rect::from_min_size(origin, egui::vec2(img_w, img_h));
                 painter.image(tex.id(), rect, full_uv, egui::Color32::WHITE);
+            }
+
+            if let Some((col, row)) = self.highlighted_cell {
+                if row > 0 && col < self.sim_width && row <= self.sim_height {
+                    let sim_w = self.sim_width as isize;
+                    let z = self.zoom;
+                    for di in -3isize..=3isize {
+                        let nc = ((col as isize + di) % sim_w + sim_w) % sim_w;
+                        let nr = row - 1;
+                        let cell_rect = egui::Rect::from_min_size(
+                            egui::pos2(origin.x + nc as f32 * z, origin.y + nr as f32 * z),
+                            egui::vec2(z, z),
+                        );
+                        painter.rect_filled(cell_rect, 1.0, egui::Color32::from_rgba_premultiplied(60, 160, 255, 60));
+                        painter.rect_stroke(
+                            cell_rect, 1.0,
+                            egui::Stroke::new(1.5, egui::Color32::from_rgb(60, 160, 255)),
+                        );
+                    }
+                    let cell_rect = egui::Rect::from_min_size(
+                        egui::pos2(origin.x + col as f32 * z, origin.y + row as f32 * z),
+                        egui::vec2(z, z),
+                    );
+                    painter.rect_filled(cell_rect, 1.0, egui::Color32::from_rgba_premultiplied(255, 200, 50, 80));
+                    painter.rect_stroke(
+                        cell_rect, 1.0,
+                        egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 200, 50)),
+                    );
+                }
             }
         });
 
