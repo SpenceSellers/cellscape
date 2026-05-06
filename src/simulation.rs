@@ -1,9 +1,7 @@
 use rand::{Rng, SeedableRng, rngs::SmallRng};
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-    mpsc,
-};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}, mpsc};
+#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
 pub struct Looped<'a> {
@@ -80,6 +78,7 @@ pub struct SimBatch {
     pub pixels: Vec<u8>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_sim(
     lookup: Vec<u8>,
     num_states: usize,
@@ -126,6 +125,61 @@ pub fn spawn_sim(
         println!("simulation done in {:.2?}", t0.elapsed());
     });
     rx
+}
+
+#[cfg(target_arch = "wasm32")]
+pub struct WasmSimRunner {
+    rule: Rule,
+    num_states: usize,
+    current: Vec<u8>,
+    noise_rng: SmallRng,
+    next: Vec<u8>,
+    next_output_row: usize,
+    pub sim_width: usize,
+    pub sim_height: usize,
+    pub noise: f64,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl WasmSimRunner {
+    pub fn new(
+        lookup: Vec<u8>,
+        num_states: usize,
+        sim_width: usize,
+        sim_height: usize,
+        noise: f64,
+        seed: u64,
+    ) -> Self {
+        let rule = Rule::from_lookup(lookup, num_states);
+        let current = build_arena(sim_width, &all_states(num_states), seed);
+        let noise_rng = SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15);
+        let next = vec![0u8; sim_width];
+        Self { rule, num_states, current, noise_rng, next, next_output_row: 0, sim_width, sim_height, noise }
+    }
+
+    pub fn step_batch(&mut self) -> Option<SimBatch> {
+        if self.next_output_row >= self.sim_height {
+            return None;
+        }
+
+        let start = self.next_output_row;
+        let mut pixels = Vec::with_capacity(BATCH_SIZE * self.sim_width);
+
+        if start == 0 {
+            pixels.extend_from_slice(&self.current);
+            self.next_output_row = 1;
+        }
+
+        while pixels.len() < BATCH_SIZE * self.sim_width && self.next_output_row < self.sim_height {
+            apply_noise(&mut self.current, self.noise, self.num_states, &mut self.noise_rng);
+            apply_step(&self.current, &self.rule, &mut self.next);
+            std::mem::swap(&mut self.current, &mut self.next);
+            pixels.extend_from_slice(&self.current);
+            self.next_output_row += 1;
+        }
+
+        Some(SimBatch { start, pixels })
+    }
 }
 
 pub fn compute_sim(

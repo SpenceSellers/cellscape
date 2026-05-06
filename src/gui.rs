@@ -3,13 +3,20 @@ use rand::Rng;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
-    mpsc,
 };
-use std::time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc;
 
 use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
 use crate::rule_editor;
-use crate::simulation::{spawn_sim, SimBatch, noise_from_slider, parse_seed, rule_string_from_lookup, rule_lookup_from_string, random_rule_lookup};
+use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_string_from_lookup, rule_lookup_from_string, random_rule_lookup};
+#[cfg(target_arch = "wasm32")]
+use crate::simulation::BATCH_SIZE;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::simulation::spawn_sim;
+#[cfg(target_arch = "wasm32")]
+use crate::simulation::WasmSimRunner;
 
 fn wrapping_idx(i: isize, m: usize) -> usize {
     ((i % m as isize + m as isize) % m as isize) as usize
@@ -31,7 +38,11 @@ pub fn build_palette(num_states: usize) -> Vec<egui::Color32> {
 
 
 pub struct CellularApp {
+    #[cfg(not(target_arch = "wasm32"))]
     pub receiver: mpsc::Receiver<SimBatch>,
+    #[cfg(target_arch = "wasm32")]
+    pub wasm_runner: Option<WasmSimRunner>,
+
     pub rows_done: usize,
     pub texture: Option<egui::TextureHandle>,
     pub sim_width: usize,
@@ -52,7 +63,8 @@ pub struct CellularApp {
     pub cells_data: Vec<u8>,
     pub highlighted_state: Option<usize>,
     pub highlighted_cell: Option<(usize, usize)>,
-    pub saved_at: Option<Instant>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub saved_at: Option<std::time::Instant>,
     pub current_screen: Screen,
     pub glance_state: GalleryState,
     pub adjacent_state: GalleryState,
@@ -67,12 +79,24 @@ impl CellularApp {
         let rule_lookup = random_rule_lookup(num_states, &mut rand::rng());
         let rule_text = rule_string_from_lookup(&rule_lookup);
         let seed = rand::rng().random::<u64>();
-        let receiver =
-            spawn_sim(rule_lookup.clone(), num_states, sim_width, sim_height, Arc::clone(&noise_atomic), seed);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let receiver = spawn_sim(rule_lookup.clone(), num_states, sim_width, sim_height, Arc::clone(&noise_atomic), seed);
+
+        #[cfg(target_arch = "wasm32")]
+        let wasm_runner = Some(WasmSimRunner::new(
+            rule_lookup.clone(), num_states, sim_width, sim_height,
+            noise_from_slider(noise_slider), seed,
+        ));
+
         let state_palette = build_palette(num_states);
 
         CellularApp {
+            #[cfg(not(target_arch = "wasm32"))]
             receiver,
+            #[cfg(target_arch = "wasm32")]
+            wasm_runner,
+
             rows_done: 0,
             texture: None,
             sim_size: sim_width,
@@ -93,6 +117,7 @@ impl CellularApp {
             cells_data: vec![0u8; sim_width * sim_height],
             highlighted_state: None,
             highlighted_cell: None,
+            #[cfg(not(target_arch = "wasm32"))]
             saved_at: None,
             current_screen: Screen::Main,
             glance_state: GalleryState::new_glance(),
@@ -100,27 +125,36 @@ impl CellularApp {
         }
     }
 
-    pub fn restart_same_rule(&mut self) {
-        self.receiver = spawn_sim(
-            self.rule_lookup.clone(),
-            self.num_states,
-            self.sim_width,
-            self.sim_height,
-            Arc::clone(&self.noise_atomic),
-            self.seed,
-        );
+    fn start_sim(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.receiver = spawn_sim(
+                self.rule_lookup.clone(), self.num_states, self.sim_width, self.sim_height,
+                Arc::clone(&self.noise_atomic), self.seed,
+            );
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.wasm_runner = Some(WasmSimRunner::new(
+                self.rule_lookup.clone(), self.num_states, self.sim_width, self.sim_height,
+                noise_from_slider(self.noise_slider), self.seed,
+            ));
+        }
         self.rows_done = 0;
+    }
+
+    pub fn restart_same_rule(&mut self) {
+        self.start_sim();
     }
 
     pub fn resize_and_restart(&mut self, size: usize) {
         self.sim_size = size;
         self.sim_width = size;
         self.sim_height = size;
-        self.receiver = spawn_sim(self.rule_lookup.clone(), self.num_states, size, size, Arc::clone(&self.noise_atomic), self.seed);
-        self.rows_done = 0;
         self.texture = None;
         self.cells_data = vec![0u8; size * size];
         self.view_initialized = false;
+        self.start_sim();
     }
 
     pub fn new_rule(&mut self) {
@@ -144,6 +178,7 @@ impl CellularApp {
         self.highlighted_cell = None;
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn save_image(&mut self) {
         use chrono::Local;
         use image::RgbImage;
@@ -161,7 +196,37 @@ impl CellularApp {
         if let Some(img) = RgbImage::from_raw(w, h, pixels) {
             img.save(&path).ok();
         }
-        self.saved_at = Some(Instant::now());
+        self.saved_at = Some(std::time::Instant::now());
+    }
+
+    fn process_batch(&mut self, ctx: &egui::Context, batch: SimBatch) {
+        let count = batch.pixels.len() / self.sim_width;
+        for (i, &v) in batch.pixels.iter().enumerate() {
+            let row = batch.start + i / self.sim_width;
+            let col = i % self.sim_width;
+            self.cells_data[row * self.sim_width + col] = v;
+        }
+        let pixels: Vec<egui::Color32> = batch
+            .pixels
+            .iter()
+            .map(|&v| self.state_palette[v as usize])
+            .collect();
+        let partial = egui::ColorImage { size: [self.sim_width, count], pixels };
+        match &mut self.texture {
+            Some(tex) => {
+                tex.set_partial([0, batch.start], partial, tex_options());
+            }
+            None => {
+                let black = egui::ColorImage::new(
+                    [self.sim_width, self.sim_height],
+                    egui::Color32::BLACK,
+                );
+                let mut tex = ctx.load_texture("sim", black, tex_options());
+                tex.set_partial([0, batch.start], partial, tex_options());
+                self.texture = Some(tex);
+            }
+        }
+        self.rows_done = self.rows_done.max(batch.start + count);
     }
 }
 
@@ -208,34 +273,29 @@ impl eframe::App for CellularApp {
             self.new_rule();
         }
 
+        // Poll simulation results (native: drain mpsc channel; wasm: step runner)
+        #[cfg(not(target_arch = "wasm32"))]
         while let Ok(batch) = self.receiver.try_recv() {
-            let count = batch.pixels.len() / self.sim_width;
-            for (i, &v) in batch.pixels.iter().enumerate() {
-                let row = batch.start + i / self.sim_width;
-                let col = i % self.sim_width;
-                self.cells_data[row * self.sim_width + col] = v;
-            }
-            let pixels: Vec<egui::Color32> = batch
-                .pixels
-                .iter()
-                .map(|&v| self.state_palette[v as usize])
-                .collect();
-            let partial = egui::ColorImage { size: [self.sim_width, count], pixels };
-            match &mut self.texture {
-                Some(tex) => {
-                    tex.set_partial([0, batch.start], partial, tex_options());
-                }
-                None => {
-                    let black = egui::ColorImage::new(
-                        [self.sim_width, self.sim_height],
-                        egui::Color32::BLACK,
-                    );
-                    let mut tex = ctx.load_texture("sim", black, tex_options());
-                    tex.set_partial([0, batch.start], partial, tex_options());
-                    self.texture = Some(tex);
+            self.process_batch(ctx, batch);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let rows_per_frame = (BATCH_SIZE * 10).min(self.sim_height);
+            let mut rows_this_frame = 0;
+            while rows_this_frame < rows_per_frame {
+                let batch = match &mut self.wasm_runner {
+                    Some(runner) => runner.step_batch(),
+                    None => None,
+                };
+                match batch {
+                    Some(b) => {
+                        rows_this_frame += b.pixels.len() / self.sim_width;
+                        self.process_batch(ctx, b);
+                    }
+                    None => break,
                 }
             }
-            self.rows_done = self.rows_done.max(batch.start + count);
         }
 
         egui::SidePanel::right("controls")
@@ -270,6 +330,7 @@ impl eframe::App for CellularApp {
 
                     ui.separator();
 
+                    #[cfg(not(target_arch = "wasm32"))]
                     ui.horizontal(|ui| {
                         if ui.button("Save PNG").clicked() {
                             self.save_image();
