@@ -47,6 +47,7 @@ pub struct GalleryState {
     cols: usize,
     title: &'static str,
     allow_reroll: bool,
+    num_states: usize,
 }
 
 impl GalleryState {
@@ -59,6 +60,7 @@ impl GalleryState {
             cols: 8,
             title: "Glance View",
             allow_reroll: true,
+            num_states: 2,
         }
     }
 
@@ -71,7 +73,12 @@ impl GalleryState {
             cols: 8,
             title: "Adjacent Rules",
             allow_reroll: false,
+            num_states: 2,
         }
+    }
+
+    pub fn set_num_states(&mut self, num_states: usize) {
+        self.num_states = num_states;
     }
 }
 
@@ -83,9 +90,8 @@ fn tex_options() -> egui::TextureOptions {
     }
 }
 
-pub fn enter_glance_view(state: &mut GalleryState) {
+pub fn enter_glance_view(state: &mut GalleryState, num_states: usize) {
     let size = state.sim_size * state.render_scale as usize;
-    let num_states = 2usize;
     state.entries.clear();
     for _ in 0..50 {
         let lookup = random_rule_lookup(num_states, &mut rand::rng());
@@ -137,7 +143,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
                 && (ui.button("Re-roll (E)").clicked()
                     || ui.input(|i| i.key_pressed(egui::Key::E)))
             {
-                enter_glance_view(state);
+                enter_glance_view(state, state.num_states);
             }
             if ui.button("Back to Main").clicked() {
                 action = GlanceAction::Back;

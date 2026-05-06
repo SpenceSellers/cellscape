@@ -285,7 +285,8 @@ impl eframe::App for CellularApp {
 
                     ui.separator();
                     if ui.button("Explore random rules").clicked() {
-                        enter_glance_view(&mut self.glance_state);
+                        self.glance_state.set_num_states(self.num_states);
+                        enter_glance_view(&mut self.glance_state, self.num_states);
                         self.current_screen = Screen::Glance;
                     }
                     if ui.button("Explore adjacent rules").clicked() {
