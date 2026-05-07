@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
 use crate::palette::{ColorPalette, build_palette, draw_palette_params};
-use crate::rule_editor;
+use crate::rule_editor::{self, RandomEditor};
 use crate::rule_meta::{draw_rule_meta_params, max_num_states};
 use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule, SimParameters};
 #[cfg(target_arch = "wasm32")]
@@ -65,6 +65,7 @@ pub struct CellularApp {
     pub current_screen: Screen,
     pub glance_state: GalleryState,
     pub adjacent_state: GalleryState,
+    pub random_editor: Option<RandomEditor>,
 }
 
 impl CellularApp {
@@ -122,6 +123,7 @@ impl CellularApp {
             current_screen: Screen::Main,
             glance_state: GalleryState::new_glance(),
             adjacent_state: GalleryState::new_adjacent(),
+            random_editor: None,
         }
     }
 
@@ -434,6 +436,8 @@ impl eframe::App for CellularApp {
                     rule_editor::draw_rule_editor(self, ui);
                 });
         }
+
+        rule_editor::draw_random_editor(self, ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let canvas = ui.available_rect_before_wrap();
