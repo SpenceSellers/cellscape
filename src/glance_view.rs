@@ -118,7 +118,7 @@ pub fn enter_adjacent_view(state: &mut GalleryState, base: &SimParameters) {
     for entry_idx in 0..base.rule.lookup.len() {
         let mut params = base.clone();
         params.rule.lookup[entry_idx] = CellSource::Static(
-            (params.rule.lookup[entry_idx].get() + 1) % base.rule.num_states as u8,
+            (params.rule.lookup[entry_idx].static_value().unwrap_or(0) + 1) % base.rule.num_states as u8,
         );
         let pixels = compute_sim(&params, size, size, state.prerun_size);
         state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false });

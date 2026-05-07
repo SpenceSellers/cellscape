@@ -45,14 +45,14 @@ impl Rule {
     }
 
     #[inline]
-    fn apply(&self, arena: &Looped, i: usize) -> u8 {
+    fn apply(&self, arena: &Looped, i: usize, rng: &mut SmallRng) -> u8 {
         let i_isize = i as isize;
         let hw = self.half_width as isize;
         let mut state = 0usize;
         for di in -hw..=hw {
             state = state * self.num_states + arena.get(i_isize + di) as usize;
         }
-        self.lookup[state].get()
+        self.lookup[state].get(rng)
     }
 }
 
@@ -63,11 +63,11 @@ pub struct SimParameters {
     pub seed: u64,
 }
 
-pub fn apply_step(arena: &[u8], rule: &Rule, out: &mut Vec<u8>) {
+pub fn apply_step(arena: &[u8], rule: &Rule, out: &mut Vec<u8>, rng: &mut SmallRng) {
     let looped = Looped::new(arena);
     out.resize(arena.len(), 0);
     for (i, cell) in out.iter_mut().enumerate() {
-        *cell = rule.apply(&looped, i);
+        *cell = rule.apply(&looped, i, rng);
     }
 }
 
@@ -129,7 +129,7 @@ impl SimRunner {
         }
         while pixels.len() < BATCH_SIZE * self.sim_width && self.next_output_row < self.sim_height {
             apply_noise(&mut self.current, self.noise, self.rule.num_states, &mut self.noise_rng);
-            apply_step(&self.current, &self.rule, &mut self.next);
+            apply_step(&self.current, &self.rule, &mut self.next, &mut self.noise_rng);
             std::mem::swap(&mut self.current, &mut self.next);
             pixels.extend_from_slice(&self.current);
             self.next_output_row += 1;
@@ -189,7 +189,7 @@ pub fn compute_sim(
     result.extend_from_slice(&current);
     for i in 1..(sim_height + prerun) {
         apply_noise(&mut current, params.noise, rule.num_states, &mut noise_rng);
-        apply_step(&current, &rule, &mut next);
+        apply_step(&current, &rule, &mut next, &mut noise_rng);
         std::mem::swap(&mut current, &mut next);
         if i > prerun {
             result.extend_from_slice(&current);
@@ -199,7 +199,10 @@ pub fn compute_sim(
 }
 
 pub fn rule_string_from_lookup(rule: &Rule) -> String {
-    rule.lookup.iter().map(|v| char::from_digit(v.get() as u32, 10).unwrap()).collect()
+    rule.lookup.iter().map(|v| match v.static_value() {
+        Some(d) => char::from_digit(d as u32, 10).unwrap(),
+        None => '?',
+    }).collect()
 }
 
 pub fn rule_id_from_lookup(rule: &Rule) -> String {

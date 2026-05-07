@@ -81,7 +81,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                         egui::pos2(out_x, out_y),
                         egui::vec2(cell_sz, cell_sz),
                     );
-                    let output = app.params.rule.lookup[state].get();
+                    let output = app.params.rule.lookup[state].static_value().unwrap_or(0);
                     let fill = app.state_palette[output as usize];
                     painter.rect_filled(out_rect, 1.0, fill);
                     painter.rect_stroke(out_rect, 1.0, egui::Stroke::new(1.0, egui::Color32::from_gray(140)));
@@ -107,7 +107,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
         });
 
     if let Some(state) = clicked {
-        let v = app.params.rule.lookup[state].get();
+        let v = app.params.rule.lookup[state].static_value().unwrap_or(0);
         app.params.rule.lookup[state] = CellSource::Static(((v as usize + 1) % app.params.rule.num_states) as u8);
         app.rule_text = rule_id_from_lookup(&app.params.rule);
         app.restart_same_rule();
