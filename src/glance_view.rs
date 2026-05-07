@@ -12,13 +12,14 @@ pub enum Screen {
 
 pub enum GlanceAction {
     None,
-    SelectRule(Vec<u8>, usize, u64),
+    SelectRule(Vec<u8>, usize, usize, u64),
     Back,
 }
 
 struct GlanceEntry {
     lookup: Vec<u8>,
     num_states: usize,
+    half_width: usize,
     seed: u64,
     pixels: Vec<u8>,
     texture: Option<egui::TextureHandle>,
@@ -48,6 +49,7 @@ pub struct GalleryState {
     title: &'static str,
     allow_reroll: bool,
     num_states: usize,
+    half_width: usize,
 }
 
 impl GalleryState {
@@ -61,6 +63,7 @@ impl GalleryState {
             title: "Glance View",
             allow_reroll: true,
             num_states: 2,
+            half_width: 3,
         }
     }
 
@@ -74,6 +77,7 @@ impl GalleryState {
             title: "Adjacent Rules",
             allow_reroll: false,
             num_states: 2,
+            half_width: 3,
         }
     }
 
@@ -90,26 +94,28 @@ fn tex_options() -> egui::TextureOptions {
     }
 }
 
-pub fn enter_glance_view(state: &mut GalleryState, num_states: usize) {
+pub fn enter_glance_view(state: &mut GalleryState, num_states: usize, half_width: usize) {
+    state.half_width = half_width;
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
     for _ in 0..50 {
-        let lookup = random_rule_lookup(num_states, &mut rand::rng());
+        let lookup = random_rule_lookup(num_states, half_width, &mut rand::rng());
         let seed = rand::rng().random::<u64>();
-        let pixels = compute_sim(&lookup, num_states, size, size, 0.0, seed, state.prerun_size);
-        state.entries.push(GlanceEntry { lookup, num_states, seed, pixels, texture: None, dirty: false });
+        let pixels = compute_sim(&lookup, num_states, half_width, size, size, 0.0, seed, state.prerun_size);
+        state.entries.push(GlanceEntry { lookup, num_states, half_width, seed, pixels, texture: None, dirty: false });
     }
 }
 
-pub fn enter_adjacent_view(state: &mut GalleryState, base_lookup: &[u8], num_states: usize, seed: u64) {
+pub fn enter_adjacent_view(state: &mut GalleryState, base_lookup: &[u8], num_states: usize, half_width: usize, seed: u64) {
+    state.half_width = half_width;
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
-    let n_entries = num_states.pow(7).min(512);
+    let n_entries = base_lookup.len().min(512);
     for entry_idx in 0..n_entries {
         let mut lookup = base_lookup.to_vec();
         lookup[entry_idx] = (lookup[entry_idx] + 1) % num_states as u8;
-        let pixels = compute_sim(&lookup, num_states, size, size, 0.0, seed, state.prerun_size);
-        state.entries.push(GlanceEntry { lookup, num_states, seed, pixels, texture: None, dirty: false });
+        let pixels = compute_sim(&lookup, num_states, half_width, size, size, 0.0, seed, state.prerun_size);
+        state.entries.push(GlanceEntry { lookup, num_states, half_width, seed, pixels, texture: None, dirty: false });
     }
 }
 
@@ -119,7 +125,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
     for entry in &mut state.entries {
         let tex_size = entry.pixels.len().isqrt();
         if tex_size != expected_size || entry.texture.is_none() || entry.dirty {
-            entry.pixels = compute_sim(&entry.lookup, entry.num_states, expected_size, expected_size, 0.0, entry.seed, state.prerun_size);
+            entry.pixels = compute_sim(&entry.lookup, entry.num_states, entry.half_width, expected_size, expected_size, 0.0, entry.seed, state.prerun_size);
             entry.dirty = false;
             entry.texture = None;
         }
@@ -143,7 +149,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
                 && (ui.button("Re-roll (E)").clicked()
                     || ui.input(|i| i.key_pressed(egui::Key::E)))
             {
-                enter_glance_view(state, state.num_states);
+                enter_glance_view(state, state.num_states, state.half_width);
             }
             if ui.button("Back to Main").clicked() {
                 action = GlanceAction::Back;
@@ -221,7 +227,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
 
         if let Some(idx) = clicked_idx {
             let entry = &state.entries[idx];
-            action = GlanceAction::SelectRule(entry.lookup.clone(), entry.num_states, entry.seed);
+            action = GlanceAction::SelectRule(entry.lookup.clone(), entry.num_states, entry.half_width, entry.seed);
         }
     });
 

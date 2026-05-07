@@ -6,7 +6,7 @@ use crate::gui::CellularApp;
 pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
     let cell_sz = 9.0_f32;
     let cell_gap = 1.0_f32;
-    let nbr_cells = 7usize;
+    let nbr_cells = 2 * app.half_width + 1;
     let pat_gap = 14.0_f32;
     let out_gap = 4.0_f32;
 
@@ -14,11 +14,11 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
     let tile_w = nbr_w + pat_gap;
     let tile_h = cell_sz + out_gap + cell_sz;
 
-    let total_patterns = app.num_states.pow(7);
-    let max_editor = if app.num_states >= 5 { 2048 } else { total_patterns };
+    let total_patterns = app.rule_lookup.len();
+    let max_editor = if total_patterns > 2048 { 2048 } else { total_patterns };
 
     ui.label(egui::RichText::new("Rule editor — click an output cell to cycle its state").small());
-    if app.num_states >= 5 {
+    if total_patterns > 2048 {
         ui.label(egui::RichText::new(format!("Showing first {} of {} patterns", max_editor, total_patterns)).small().color(egui::Color32::GRAY));
     }
     ui.separator();
@@ -71,7 +71,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                         );
                         let fill = app.state_palette[digit];
                         painter.rect_filled(r, 1.0, fill);
-                        let border = if bit_pos == 3 {
+                        let border = if bit_pos == app.half_width {
                             egui::Color32::from_rgb(80, 130, 220)
                         } else {
                             egui::Color32::from_gray(80)

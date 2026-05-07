@@ -36,8 +36,8 @@ pub struct Rule {
 }
 
 impl Rule {
-    pub fn from_lookup(lookup: Vec<u8>, num_states: usize) -> Self {
-        Self { lookup, half_width: 3, num_states }
+    pub fn from_lookup(lookup: Vec<u8>, num_states: usize, half_width: usize) -> Self {
+        Self { lookup, half_width: half_width as isize, num_states }
     }
 
     #[inline]
@@ -90,9 +90,9 @@ pub struct SimRunner {
 }
 
 impl SimRunner {
-    pub fn new(lookup: Vec<u8>, num_states: usize, sim_width: usize, sim_height: usize, seed: u64) -> Self {
+    pub fn new(lookup: Vec<u8>, num_states: usize, half_width: usize, sim_width: usize, sim_height: usize, seed: u64) -> Self {
         Self {
-            rule: Rule::from_lookup(lookup, num_states),
+            rule: Rule::from_lookup(lookup, num_states, half_width),
             current: build_arena(sim_width, &all_states(num_states), seed),
             noise_rng: SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15),
             next: vec![0u8; sim_width],
@@ -128,6 +128,7 @@ impl SimRunner {
 pub fn spawn_sim(
     lookup: Vec<u8>,
     num_states: usize,
+    half_width: usize,
     sim_width: usize,
     sim_height: usize,
     noise_atomic: Arc<AtomicU64>,
@@ -135,7 +136,7 @@ pub fn spawn_sim(
 ) -> mpsc::Receiver<SimBatch> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let mut runner = SimRunner::new(lookup, num_states, sim_width, sim_height, seed);
+        let mut runner = SimRunner::new(lookup, num_states, half_width, sim_width, sim_height, seed);
         let t0 = std::time::Instant::now();
         loop {
             let noise = f64::from_bits(noise_atomic.load(Ordering::Relaxed));
@@ -160,12 +161,13 @@ impl WasmSimRunner {
     pub fn new(
         lookup: Vec<u8>,
         num_states: usize,
+        half_width: usize,
         sim_width: usize,
         sim_height: usize,
         noise: f64,
         seed: u64,
     ) -> Self {
-        Self { runner: SimRunner::new(lookup, num_states, sim_width, sim_height, seed), noise }
+        Self { runner: SimRunner::new(lookup, num_states, half_width, sim_width, sim_height, seed), noise }
     }
 
     pub fn step_batch(&mut self) -> Option<SimBatch> {
@@ -176,13 +178,14 @@ impl WasmSimRunner {
 pub fn compute_sim(
     lookup: &[u8],
     num_states: usize,
+    half_width: usize,
     sim_width: usize,
     sim_height: usize,
     noise: f64,
     seed: u64,
     prerun: usize,
 ) -> Vec<u8> {
-    let rule = Rule::from_lookup(lookup.to_vec(), num_states);
+    let rule = Rule::from_lookup(lookup.to_vec(), num_states, half_width);
     let mut current = build_arena(sim_width, &all_states(num_states), seed);
     let mut noise_rng = SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15);
     let mut next = vec![0u8; sim_width];
@@ -203,16 +206,18 @@ pub fn rule_string_from_lookup(lookup: &[u8]) -> String {
     lookup.iter().map(|&v| char::from_digit(v as u32, 10).unwrap()).collect()
 }
 
-pub fn rule_lookup_from_string(s: &str, num_states: usize) -> Option<Vec<u8>> {
-    let expected_len = num_states.pow(7);
+pub fn rule_lookup_from_string(s: &str, num_states: usize, half_width: usize) -> Option<Vec<u8>> {
+    let width = 2 * half_width + 1;
+    let expected_len = num_states.pow(width as u32);
     if s.len() != expected_len { return None; }
     s.chars()
         .map(|c| c.to_digit(10).and_then(|d| if (d as usize) < num_states { Some(d as u8) } else { None }))
         .collect()
 }
 
-pub fn random_rule_lookup(num_states: usize, rng: &mut impl Rng) -> Vec<u8> {
-    (0..num_states.pow(7)).map(|_| rng.random_range(0..num_states as u8)).collect()
+pub fn random_rule_lookup(num_states: usize, half_width: usize, rng: &mut impl Rng) -> Vec<u8> {
+    let width = 2 * half_width + 1;
+    (0..num_states.pow(width as u32)).map(|_| rng.random_range(0..num_states as u8)).collect()
 }
 
 pub fn parse_seed(text: &str) -> u64 {
