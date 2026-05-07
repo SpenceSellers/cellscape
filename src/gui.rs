@@ -1,9 +1,5 @@
 use eframe::egui;
 use rand::Rng;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
 
@@ -169,7 +165,6 @@ pub struct CellularApp {
     pub zoom: f32,
     pub pan: egui::Vec2,
     pub view_initialized: bool,
-    pub noise_atomic: Arc<AtomicU64>,
     pub cells_data: Vec<u8>,
     pub highlighted_state: Option<usize>,
     pub highlighted_cell: Option<(usize, usize)>,
@@ -198,10 +193,9 @@ impl CellularApp {
         }
 
         let rule_text = rule_id_from_lookup(&params.rule);
-        let noise_atomic = Arc::new(AtomicU64::new(params.noise.to_bits()));
 
         #[cfg(not(target_arch = "wasm32"))]
-        let receiver = spawn_sim(params.clone(), sim_width, sim_height, Arc::clone(&noise_atomic));
+        let receiver = spawn_sim(params.clone(), sim_width, sim_height);
 
         #[cfg(target_arch = "wasm32")]
         let wasm_runner = Some(WasmSimRunner::new(params.clone(), sim_width, sim_height));
@@ -228,7 +222,6 @@ impl CellularApp {
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
             view_initialized: false,
-            noise_atomic,
             cells_data: vec![0u8; sim_width * sim_height],
             highlighted_state: None,
             highlighted_cell: None,
@@ -243,7 +236,7 @@ impl CellularApp {
     fn start_sim(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.receiver = spawn_sim(self.params.clone(), self.sim_width, self.sim_height, Arc::clone(&self.noise_atomic));
+            self.receiver = spawn_sim(self.params.clone(), self.sim_width, self.sim_height);
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -404,7 +397,6 @@ impl eframe::App for CellularApp {
             return;
         }
 
-        self.noise_atomic.store(self.params.noise.to_bits(), Ordering::Relaxed);
 
         if ctx.input(|i| i.key_pressed(egui::Key::N)) {
             self.new_rule();
@@ -567,8 +559,7 @@ impl eframe::App for CellularApp {
                     );
                     if noise_resp.changed() {
                         self.params.noise = noise_from_slider(noise_t);
-                        self.noise_atomic.store(self.params.noise.to_bits(), Ordering::Relaxed);
-                        self.restart_same_rule();
+                                        self.restart_same_rule();
                     }
 
                     ui.separator();

@@ -1,6 +1,6 @@
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}, mpsc};
+use std::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
@@ -92,6 +92,7 @@ pub struct SimBatch {
 
 pub struct SimRunner {
     rule: Rule,
+    noise: f64,
     current: Vec<u8>,
     noise_rng: SmallRng,
     next: Vec<u8>,
@@ -106,6 +107,7 @@ impl SimRunner {
         let seed = params.seed;
         Self {
             rule: params.rule,
+            noise: params.noise,
             current: build_arena(sim_width, &all_states(num_states), seed),
             noise_rng: SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15),
             next: vec![0u8; sim_width],
@@ -115,7 +117,7 @@ impl SimRunner {
         }
     }
 
-    pub fn step_batch(&mut self, noise: f64) -> Option<SimBatch> {
+    pub fn step_batch(&mut self) -> Option<SimBatch> {
         if self.next_output_row >= self.sim_height {
             return None;
         }
@@ -126,7 +128,7 @@ impl SimRunner {
             self.next_output_row = 1;
         }
         while pixels.len() < BATCH_SIZE * self.sim_width && self.next_output_row < self.sim_height {
-            apply_noise(&mut self.current, noise, self.rule.num_states, &mut self.noise_rng);
+            apply_noise(&mut self.current, self.noise, self.rule.num_states, &mut self.noise_rng);
             apply_step(&self.current, &self.rule, &mut self.next);
             std::mem::swap(&mut self.current, &mut self.next);
             pixels.extend_from_slice(&self.current);
@@ -141,15 +143,13 @@ pub fn spawn_sim(
     params: SimParameters,
     sim_width: usize,
     sim_height: usize,
-    noise_atomic: Arc<AtomicU64>,
 ) -> mpsc::Receiver<SimBatch> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let mut runner = SimRunner::new(params, sim_width, sim_height);
         let t0 = std::time::Instant::now();
         loop {
-            let noise = f64::from_bits(noise_atomic.load(Ordering::Relaxed));
-            match runner.step_batch(noise) {
+            match runner.step_batch() {
                 Some(batch) => { if tx.send(batch).is_err() { return; } }
                 None => break,
             }
@@ -162,18 +162,16 @@ pub fn spawn_sim(
 #[cfg(target_arch = "wasm32")]
 pub struct WasmSimRunner {
     runner: SimRunner,
-    pub noise: f64,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl WasmSimRunner {
     pub fn new(params: SimParameters, sim_width: usize, sim_height: usize) -> Self {
-        let noise = params.noise;
-        Self { runner: SimRunner::new(params, sim_width, sim_height), noise }
+        Self { runner: SimRunner::new(params, sim_width, sim_height) }
     }
 
     pub fn step_batch(&mut self) -> Option<SimBatch> {
-        self.runner.step_batch(self.noise)
+        self.runner.step_batch()
     }
 }
 
