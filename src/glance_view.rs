@@ -110,7 +110,7 @@ pub fn enter_adjacent_view(state: &mut GalleryState, base_lookup: &[u8], num_sta
     state.half_width = half_width;
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
-    let n_entries = base_lookup.len().min(512);
+    let n_entries = base_lookup.len();
     for entry_idx in 0..n_entries {
         let mut lookup = base_lookup.to_vec();
         lookup[entry_idx] = (lookup[entry_idx] + 1) % num_states as u8;

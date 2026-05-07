@@ -15,12 +15,8 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
     let tile_h = cell_sz + out_gap + cell_sz;
 
     let total_patterns = app.rule_lookup.len();
-    let max_editor = if total_patterns > 2048 { 2048 } else { total_patterns };
 
     ui.label(egui::RichText::new("Rule editor — click an output cell to cycle its state").small());
-    if total_patterns > 2048 {
-        ui.label(egui::RichText::new(format!("Showing first {} of {} patterns", max_editor, total_patterns)).small().color(egui::Color32::GRAY));
-    }
     ui.separator();
 
     let mut clicked: Option<usize> = None;
@@ -31,7 +27,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             let avail_w = ui.available_width();
             let cols = ((avail_w / tile_w) as usize).clamp(1, total_patterns);
-            let rows = max_editor.div_ceil(cols);
+            let rows = total_patterns.div_ceil(cols);
 
             for row in 0..rows {
                 let (row_rect, _) = ui.allocate_exact_size(
@@ -42,7 +38,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
 
                 for col in 0..cols {
                     let state = row * cols + col;
-                    if state >= max_editor { break; }
+                    if state >= total_patterns { break; }
 
                     let x0 = row_rect.min.x + col as f32 * tile_w;
                     let y0 = row_rect.min.y;

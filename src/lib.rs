@@ -29,7 +29,7 @@ pub async fn start() -> Result<(), wasm_bindgen::JsValue> {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(gui::CellularApp::new(cc, 2000, 2000, Some("00010110110010110011111111010011010100110000000100110000110011000100110001010001011010001010100001011111100101001111000001111110"))))),
+                Box::new(|cc| Ok(Box::new(gui::CellularApp::new(cc, 2000, 2000, Some("2;7;00010110110010110011111111010011010100110000000100110000110011000100110001010001011010001010100001011111100101001111000001111110"))))),
             )
             .await
             .expect("failed to start eframe");

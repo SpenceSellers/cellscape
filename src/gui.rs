@@ -53,6 +53,19 @@ pub fn build_palette(num_states: usize) -> Vec<egui::Color32> {
 }
 
 
+const MAX_RULES: u64 = 10_000;
+
+fn max_num_states(half_width: usize) -> usize {
+    let width = (2 * half_width + 1) as u32;
+    (2..=8).rev().find(|&k| (k as u64).pow(width) <= MAX_RULES).unwrap_or(2)
+}
+
+fn max_half_width(num_states: usize) -> usize {
+    (1..=4).rev().find(|&hw| {
+        (num_states as u64).pow((2 * hw + 1) as u32) <= MAX_RULES
+    }).unwrap_or(1)
+}
+
 pub struct CellularApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub receiver: mpsc::Receiver<SimBatch>,
@@ -348,22 +361,33 @@ impl eframe::App for CellularApp {
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
                     ui.label("States:");
+                    let max_k = max_num_states(self.half_width);
                     let states_resp = ui.add(
-                        egui::Slider::new(&mut self.num_states, 2..=8).integer(),
+                        egui::Slider::new(&mut self.num_states, 2..=max_k).integer(),
                     );
                     if states_resp.changed() {
+                        self.half_width = self.half_width.min(max_half_width(self.num_states));
                         self.change_num_states(self.num_states);
                     }
                     ui.label("Rule width:");
+                    let max_hw = max_half_width(self.num_states);
                     let rw_resp = ui.add(
-                        egui::Slider::new(&mut self.half_width, 1..=4)
+                        egui::Slider::new(&mut self.half_width, 1..=max_hw)
                             .integer()
                             .custom_formatter(|v, _| format!("{} cells", 2 * v as usize + 1)),
                     );
                     if rw_resp.changed() {
+                        let new_max_k = max_num_states(self.half_width);
+                        if self.num_states > new_max_k {
+                            self.num_states = new_max_k;
+                            self.state_palette = build_palette(new_max_k);
+                        }
                         let hw = self.half_width;
                         self.change_half_width(hw);
                     }
+
+                    let rule_count = (self.num_states as u64).pow((2 * self.half_width + 1) as u32);
+                    ui.label(egui::RichText::new(format!("{} rules", rule_count)).small().color(egui::Color32::GRAY));
 
                     ui.horizontal(|ui| {
                         ui.label("Rule ID:");
