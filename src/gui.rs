@@ -18,6 +18,24 @@ use crate::simulation::spawn_sim;
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::WasmSimRunner;
 
+#[cfg(target_arch = "wasm32")]
+fn read_url_hash() -> Option<(Vec<u8>, usize)> {
+    use crate::simulation::rule_lookup_from_string;
+    let hash = web_sys::window()?.location().hash().ok()?;
+    let hash = hash.trim_start_matches('#');
+    let (rule_str, k_str) = hash.split_once('/')?;
+    let k: usize = k_str.parse().ok()?;
+    let lookup = rule_lookup_from_string(rule_str, k)?;
+    Some((lookup, k))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_url_hash(rule: &str, num_states: usize) {
+    if let Some(win) = web_sys::window() {
+        let _ = win.location().set_hash(&format!("{}/{}", rule, num_states));
+    }
+}
+
 fn wrapping_idx(i: isize, m: usize) -> usize {
     ((i % m as isize + m as isize) % m as isize) as usize
 }
@@ -71,12 +89,21 @@ pub struct CellularApp {
 }
 
 impl CellularApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>, sim_width: usize, sim_height: usize) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>, sim_width: usize, sim_height: usize, initial_rule: Option<&str>) -> Self {
         let noise_slider = 0.5f64;
         let noise_atomic =
             Arc::new(AtomicU64::new(noise_from_slider(noise_slider).to_bits()));
-        let num_states = 2usize;
-        let rule_lookup = random_rule_lookup(num_states, &mut rand::rng());
+        let mut num_states = 2usize;
+        let mut rule_lookup = initial_rule
+            .and_then(|s| rule_lookup_from_string(s, num_states))
+            .unwrap_or_else(|| random_rule_lookup(num_states, &mut rand::rng()));
+
+        #[cfg(target_arch = "wasm32")]
+        if let Some((hash_lookup, hash_k)) = read_url_hash() {
+            rule_lookup = hash_lookup;
+            num_states = hash_k;
+        }
+
         let rule_text = rule_string_from_lookup(&rule_lookup);
         let seed = rand::rng().random::<u64>();
 
@@ -145,6 +172,8 @@ impl CellularApp {
 
     pub fn restart_same_rule(&mut self) {
         self.start_sim();
+        #[cfg(target_arch = "wasm32")]
+        write_url_hash(&self.rule_text, self.num_states);
     }
 
     pub fn resize_and_restart(&mut self, size: usize) {
