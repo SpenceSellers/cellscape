@@ -32,26 +32,35 @@ pub fn all_states(num_states: usize) -> Vec<u8> {
     (0..num_states).map(|i| i as u8).collect()
 }
 
+#[derive(Clone)]
 pub struct Rule {
-    lookup: Vec<CellSource>,
-    half_width: isize,
-    num_states: usize,
+    pub lookup: Vec<CellSource>,
+    pub half_width: usize,
+    pub num_states: usize,
 }
 
 impl Rule {
-    pub fn from_lookup(lookup: Vec<CellSource>, num_states: usize, half_width: usize) -> Self {
-        Self { lookup, half_width: half_width as isize, num_states }
+    pub fn new(lookup: Vec<CellSource>, num_states: usize, half_width: usize) -> Self {
+        Self { lookup, half_width, num_states }
     }
 
     #[inline]
     fn apply(&self, arena: &Looped, i: usize) -> u8 {
         let i_isize = i as isize;
+        let hw = self.half_width as isize;
         let mut state = 0usize;
-        for di in -self.half_width..=self.half_width {
+        for di in -hw..=hw {
             state = state * self.num_states + arena.get(i_isize + di) as usize;
         }
         self.lookup[state].get()
     }
+}
+
+#[derive(Clone)]
+pub struct SimParameters {
+    pub rule: Rule,
+    pub noise: f64,
+    pub seed: u64,
 }
 
 pub fn apply_step(arena: &[u8], rule: &Rule, out: &mut Vec<u8>) {
@@ -83,7 +92,6 @@ pub struct SimBatch {
 
 pub struct SimRunner {
     rule: Rule,
-    num_states: usize,
     current: Vec<u8>,
     noise_rng: SmallRng,
     next: Vec<u8>,
@@ -93,14 +101,15 @@ pub struct SimRunner {
 }
 
 impl SimRunner {
-    pub fn new(lookup: Vec<CellSource>, num_states: usize, half_width: usize, sim_width: usize, sim_height: usize, seed: u64) -> Self {
+    pub fn new(params: SimParameters, sim_width: usize, sim_height: usize) -> Self {
+        let num_states = params.rule.num_states;
+        let seed = params.seed;
         Self {
-            rule: Rule::from_lookup(lookup, num_states, half_width),
+            rule: params.rule,
             current: build_arena(sim_width, &all_states(num_states), seed),
             noise_rng: SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15),
             next: vec![0u8; sim_width],
             next_output_row: 0,
-            num_states,
             sim_width,
             sim_height,
         }
@@ -117,7 +126,7 @@ impl SimRunner {
             self.next_output_row = 1;
         }
         while pixels.len() < BATCH_SIZE * self.sim_width && self.next_output_row < self.sim_height {
-            apply_noise(&mut self.current, noise, self.num_states, &mut self.noise_rng);
+            apply_noise(&mut self.current, noise, self.rule.num_states, &mut self.noise_rng);
             apply_step(&self.current, &self.rule, &mut self.next);
             std::mem::swap(&mut self.current, &mut self.next);
             pixels.extend_from_slice(&self.current);
@@ -129,17 +138,14 @@ impl SimRunner {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_sim(
-    lookup: Vec<CellSource>,
-    num_states: usize,
-    half_width: usize,
+    params: SimParameters,
     sim_width: usize,
     sim_height: usize,
     noise_atomic: Arc<AtomicU64>,
-    seed: u64,
 ) -> mpsc::Receiver<SimBatch> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let mut runner = SimRunner::new(lookup, num_states, half_width, sim_width, sim_height, seed);
+        let mut runner = SimRunner::new(params, sim_width, sim_height);
         let t0 = std::time::Instant::now();
         loop {
             let noise = f64::from_bits(noise_atomic.load(Ordering::Relaxed));
@@ -161,16 +167,9 @@ pub struct WasmSimRunner {
 
 #[cfg(target_arch = "wasm32")]
 impl WasmSimRunner {
-    pub fn new(
-        lookup: Vec<CellSource>,
-        num_states: usize,
-        half_width: usize,
-        sim_width: usize,
-        sim_height: usize,
-        noise: f64,
-        seed: u64,
-    ) -> Self {
-        Self { runner: SimRunner::new(lookup, num_states, half_width, sim_width, sim_height, seed), noise }
+    pub fn new(params: SimParameters, sim_width: usize, sim_height: usize) -> Self {
+        let noise = params.noise;
+        Self { runner: SimRunner::new(params, sim_width, sim_height), noise }
     }
 
     pub fn step_batch(&mut self) -> Option<SimBatch> {
@@ -179,23 +178,19 @@ impl WasmSimRunner {
 }
 
 pub fn compute_sim(
-    lookup: &[CellSource],
-    num_states: usize,
-    half_width: usize,
+    params: &SimParameters,
     sim_width: usize,
     sim_height: usize,
-    noise: f64,
-    seed: u64,
     prerun: usize,
 ) -> Vec<u8> {
-    let rule = Rule::from_lookup(lookup.to_vec(), num_states, half_width);
-    let mut current = build_arena(sim_width, &all_states(num_states), seed);
-    let mut noise_rng = SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15);
+    let rule = &params.rule;
+    let mut current = build_arena(sim_width, &all_states(rule.num_states), params.seed);
+    let mut noise_rng = SmallRng::seed_from_u64(params.seed ^ 0x9e3779b97f4a7c15);
     let mut next = vec![0u8; sim_width];
     let mut result = Vec::with_capacity(sim_width * sim_height);
     result.extend_from_slice(&current);
     for i in 1..(sim_height + prerun) {
-        apply_noise(&mut current, noise, num_states, &mut noise_rng);
+        apply_noise(&mut current, params.noise, rule.num_states, &mut noise_rng);
         apply_step(&current, &rule, &mut next);
         std::mem::swap(&mut current, &mut next);
         if i > prerun {
@@ -205,39 +200,42 @@ pub fn compute_sim(
     result
 }
 
-pub fn rule_string_from_lookup(lookup: &[CellSource]) -> String {
-    lookup.iter().map(|v| char::from_digit(v.get() as u32, 10).unwrap()).collect()
+pub fn rule_string_from_lookup(rule: &Rule) -> String {
+    rule.lookup.iter().map(|v| char::from_digit(v.get() as u32, 10).unwrap()).collect()
 }
 
-pub fn rule_id_from_lookup(lookup: &[CellSource], num_states: usize, half_width: usize) -> String {
-    let rule_width = 2 * half_width + 1;
-    let digits = rule_string_from_lookup(lookup);
-    format!("{};{};{}", num_states, rule_width, digits)
+pub fn rule_id_from_lookup(rule: &Rule) -> String {
+    let rule_width = 2 * rule.half_width + 1;
+    let digits = rule_string_from_lookup(rule);
+    format!("{};{};{}", rule.num_states, rule_width, digits)
 }
 
-pub fn parse_rule_id(id: &str) -> Option<(Vec<CellSource>, usize, usize)> {
+pub fn parse_rule_id(id: &str) -> Option<Rule> {
     let mut parts = id.splitn(3, ';');
     let num_states: usize = parts.next()?.parse().ok()?;
     let rule_width: usize = parts.next()?.parse().ok()?;
     if rule_width == 0 || rule_width % 2 == 0 { return None; }
     let half_width = (rule_width - 1) / 2;
     let digits_str = parts.next()?;
-    let lookup = rule_lookup_from_string(digits_str, num_states, half_width)?;
-    Some((lookup, num_states, half_width))
+    rule_lookup_from_string(digits_str, num_states, half_width)
 }
 
-pub fn rule_lookup_from_string(s: &str, num_states: usize, half_width: usize) -> Option<Vec<CellSource>> {
+pub fn rule_lookup_from_string(s: &str, num_states: usize, half_width: usize) -> Option<Rule> {
     let width = 2 * half_width + 1;
     let expected_len = num_states.pow(width as u32);
     if s.len() != expected_len { return None; }
-    s.chars()
+    let lookup: Option<Vec<CellSource>> = s.chars()
         .map(|c| c.to_digit(10).and_then(|d| if (d as usize) < num_states { Some(CellSource::Static(d as u8)) } else { None }))
-        .collect()
+        .collect();
+    Some(Rule::new(lookup?, num_states, half_width))
 }
 
-pub fn random_rule_lookup(num_states: usize, half_width: usize, rng: &mut impl Rng) -> Vec<CellSource> {
+pub fn random_rule(num_states: usize, half_width: usize, rng: &mut impl Rng) -> Rule {
     let width = 2 * half_width + 1;
-    (0..num_states.pow(width as u32)).map(|_| CellSource::Static(rng.random_range(0..num_states as u8))).collect()
+    let lookup = (0..num_states.pow(width as u32))
+        .map(|_| CellSource::Static(rng.random_range(0..num_states as u8)))
+        .collect();
+    Rule::new(lookup, num_states, half_width)
 }
 
 pub fn parse_seed(text: &str) -> u64 {
