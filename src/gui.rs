@@ -42,6 +42,8 @@ fn wrapping_idx(i: isize, m: usize) -> usize {
 pub enum ColorPalette {
     Classic,
     Grayscale,
+    GrayscaleDark,
+    GrayscaleLight,
     Neon,
     Pastel,
 }
@@ -51,6 +53,8 @@ impl ColorPalette {
         match self {
             ColorPalette::Classic => "Classic",
             ColorPalette::Grayscale => "Grayscale",
+            ColorPalette::GrayscaleDark => "Grayscale (Dark)",
+            ColorPalette::GrayscaleLight => "Grayscale (Light)",
             ColorPalette::Neon => "Neon",
             ColorPalette::Pastel => "Pastel",
         }
@@ -60,6 +64,8 @@ impl ColorPalette {
 const ALL_PALETTES: &[ColorPalette] = &[
     ColorPalette::Classic,
     ColorPalette::Grayscale,
+    ColorPalette::GrayscaleDark,
+    ColorPalette::GrayscaleLight,
     ColorPalette::Neon,
     ColorPalette::Pastel,
 ];
@@ -85,6 +91,26 @@ pub fn build_palette(palette: ColorPalette, num_states: usize) -> Vec<egui::Colo
             egui::Color32::from_gray(96),
             egui::Color32::from_gray(160),
             egui::Color32::from_gray(224),
+        ],
+        ColorPalette::GrayscaleDark => &[
+            egui::Color32::from_gray(0),
+            egui::Color32::from_gray(36),
+            egui::Color32::from_gray(72),
+            egui::Color32::from_gray(108),
+            egui::Color32::from_gray(144),
+            egui::Color32::from_gray(180),
+            egui::Color32::from_gray(210),
+            egui::Color32::from_gray(235),
+        ],
+        ColorPalette::GrayscaleLight => &[
+            egui::Color32::from_gray(255),
+            egui::Color32::from_gray(220),
+            egui::Color32::from_gray(184),
+            egui::Color32::from_gray(148),
+            egui::Color32::from_gray(112),
+            egui::Color32::from_gray(76),
+            egui::Color32::from_gray(45),
+            egui::Color32::from_gray(20),
         ],
         ColorPalette::Neon => &[
             egui::Color32::from_rgb(10, 10, 10),
