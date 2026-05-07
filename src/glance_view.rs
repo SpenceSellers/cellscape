@@ -86,6 +86,7 @@ fn tex_options() -> egui::TextureOptions {
     egui::TextureOptions {
         magnification: egui::TextureFilter::Nearest,
         minification: egui::TextureFilter::Linear,
+        mipmap_mode: Some(egui::TextureFilter::Linear),
         ..Default::default()
     }
 }
