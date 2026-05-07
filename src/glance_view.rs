@@ -1,6 +1,7 @@
 use eframe::egui;
 use rand::Rng;
 
+use crate::rule_meta::draw_rule_meta_params;
 use crate::simulation::{compute_sim, random_rule, rule_string_from_lookup, CellSource, SimParameters};
 
 #[derive(PartialEq)]
@@ -33,6 +34,7 @@ pub struct GalleryState {
     allow_reroll: bool,
     num_states: usize,
     half_width: usize,
+    pub noise: f64,
     pub palette: Vec<egui::Color32>,
 }
 
@@ -48,6 +50,7 @@ impl GalleryState {
             allow_reroll: true,
             num_states: 2,
             half_width: 3,
+            noise: 0.0,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
         }
     }
@@ -63,6 +66,7 @@ impl GalleryState {
             allow_reroll: false,
             num_states: 2,
             half_width: 3,
+            noise: 0.0,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
         }
     }
@@ -89,19 +93,22 @@ fn tex_options() -> egui::TextureOptions {
 }
 
 pub fn enter_glance_view(state: &mut GalleryState, num_states: usize, half_width: usize) {
+    state.num_states = num_states;
     state.half_width = half_width;
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
     for _ in 0..50 {
         let rule = random_rule(num_states, half_width, &mut rand::rng());
-        let params = SimParameters { rule, noise: 0.0, seed: rand::rng().random::<u64>() };
+        let params = SimParameters { rule, noise: state.noise, seed: rand::rng().random::<u64>() };
         let pixels = compute_sim(&params, size, size, state.prerun_size);
         state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false });
     }
 }
 
 pub fn enter_adjacent_view(state: &mut GalleryState, base: &SimParameters) {
+    state.num_states = base.rule.num_states;
     state.half_width = base.rule.half_width;
+    state.noise = base.noise;
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
     for entry_idx in 0..base.rule.lookup.len() {
@@ -126,7 +133,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
         }
         if entry.texture.is_none() {
             let pixels: Vec<egui::Color32> = entry.pixels.iter()
-                .map(|&v| state.palette[v as usize])
+                .map(|&v| state.palette[v as usize % state.palette.len()])
                 .collect();
             let image = egui::ColorImage { size: [expected_size, expected_size], pixels };
             let tex_name = format!("gallery_{}_{}", rule_string_from_lookup(&entry.params.rule), entry.params.seed);
@@ -147,6 +154,25 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
         if ui.button("Back to Main").clicked() {
             action = GlanceAction::Back;
         }
+
+        ui.separator();
+
+        let mut num_states = state.num_states;
+        let mut half_width = state.half_width;
+        let mut noise = state.noise;
+        let meta_resp = draw_rule_meta_params(ui, &mut num_states, &mut half_width, &mut noise, state.allow_reroll);
+        if (meta_resp.num_states_changed || meta_resp.half_width_changed) && state.allow_reroll {
+            state.noise = noise;
+            enter_glance_view(state, num_states, half_width);
+        }
+        if meta_resp.noise_changed {
+            state.noise = noise;
+            for entry in &mut state.entries {
+                entry.params.noise = noise;
+                entry.dirty = true;
+            }
+        }
+
         ui.separator();
         ui.label("Render Scale:");
         let mut scale = state.render_scale;

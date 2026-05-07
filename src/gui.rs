@@ -5,6 +5,7 @@ use std::sync::mpsc;
 
 use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
 use crate::rule_editor;
+use crate::rule_meta::{draw_rule_meta_params, max_num_states};
 use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule, SimParameters};
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::BATCH_SIZE;
@@ -132,18 +133,6 @@ pub fn build_palette(palette: ColorPalette, num_states: usize) -> Vec<egui::Colo
 }
 
 
-const MAX_RULES: u64 = 10_000;
-
-fn max_num_states(half_width: usize) -> usize {
-    let width = (2 * half_width + 1) as u32;
-    (2..=8).rev().find(|&k| (k as u64).pow(width) <= MAX_RULES).unwrap_or(2)
-}
-
-fn max_half_width(num_states: usize) -> usize {
-    (1..=4).rev().find(|&hw| {
-        (num_states as u64).pow((2 * hw + 1) as u32) <= MAX_RULES
-    }).unwrap_or(1)
-}
 
 pub struct CellularApp {
     #[cfg(not(target_arch = "wasm32"))]
@@ -432,30 +421,23 @@ impl eframe::App for CellularApp {
             .default_width(260.0)
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
-                    ui.label("States:");
-                    let max_k = max_num_states(self.params.rule.half_width);
                     let mut num_states = self.params.rule.num_states;
-                    let states_resp = ui.add(egui::Slider::new(&mut num_states, 2..=max_k).integer());
-                    if states_resp.changed() {
+                    let mut half_width = self.params.rule.half_width;
+                    let mut noise = self.params.noise;
+                    let meta_resp = draw_rule_meta_params(ui, &mut num_states, &mut half_width, &mut noise, true);
+                    if meta_resp.num_states_changed {
                         self.change_num_states(num_states.min(max_num_states(self.params.rule.half_width)));
                     }
-                    ui.label("Rule width:");
-                    let max_hw = max_half_width(self.params.rule.num_states);
-                    let mut half_width = self.params.rule.half_width;
-                    let rw_resp = ui.add(
-                        egui::Slider::new(&mut half_width, 1..=max_hw)
-                            .integer()
-                            .custom_formatter(|v, _| format!("{} cells", 2 * v as usize + 1)),
-                    );
-                    if rw_resp.changed() {
+                    if meta_resp.half_width_changed {
                         if self.params.rule.num_states > max_num_states(half_width) {
                             self.state_palette = build_palette(self.selected_palette, max_num_states(half_width));
                         }
                         self.change_half_width(half_width);
                     }
-
-                    let rule_count = (self.params.rule.num_states as u64).pow((2 * self.params.rule.half_width + 1) as u32);
-                    ui.label(egui::RichText::new(format!("{} rules", rule_count)).small().color(egui::Color32::GRAY));
+                    if meta_resp.noise_changed {
+                        self.params.noise = noise;
+                        self.restart_same_rule();
+                    }
 
                     ui.horizontal(|ui| {
                         ui.label("Rule ID:");
@@ -496,6 +478,7 @@ impl eframe::App for CellularApp {
                     if ui.button("Explore random rules").clicked() {
                         self.glance_state.set_num_states(self.params.rule.num_states);
                         self.glance_state.set_palette(self.state_palette.clone());
+                        self.glance_state.noise = self.params.noise;
                         enter_glance_view(&mut self.glance_state, self.params.rule.num_states, self.params.rule.half_width);
                         self.current_screen = Screen::Glance;
                     }
@@ -532,34 +515,6 @@ impl eframe::App for CellularApp {
                     if ui.button("Cycle state colors").clicked() {
                         self.cycle_palette();
                         self.rebuild_texture(ui.ctx());
-                    }
-
-                    ui.separator();
-                    ui.label("Noise:");
-                    let mut noise_t = if self.params.noise > 0.0 {
-                        ((self.params.noise.log10() + 7.0) / 6.0).clamp(0.0, 1.0)
-                    } else {
-                        0.0
-                    };
-                    let noise_resp = ui.add(
-                        egui::Slider::new(&mut noise_t, 0.0f64..=1.0)
-                            .custom_formatter(|v, _| {
-                                let n = noise_from_slider(v);
-                                if n == 0.0 { "0".to_string() } else { format!("{:.2e}", n) }
-                            })
-                            .custom_parser(|s| {
-                                s.parse::<f64>().ok().map(|noise| {
-                                    if noise > 0.0 {
-                                        ((noise.log10() + 7.0) / 6.0).clamp(0.0, 1.0)
-                                    } else {
-                                        0.0
-                                    }
-                                })
-                            }),
-                    );
-                    if noise_resp.changed() {
-                        self.params.noise = noise_from_slider(noise_t);
-                                        self.restart_same_rule();
                     }
 
                     ui.separator();

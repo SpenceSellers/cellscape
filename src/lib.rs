@@ -1,5 +1,6 @@
 pub mod simulation;
 pub mod rule_editor;
+pub mod rule_meta;
 pub mod glance_view;
 pub mod gui;
 
