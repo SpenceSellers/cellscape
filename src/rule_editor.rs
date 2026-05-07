@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::simulation::rule_string_from_lookup;
+use crate::simulation::rule_id_from_lookup;
 use crate::gui::CellularApp;
 
 pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
@@ -113,7 +113,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
     if let Some(state) = clicked {
         let v = app.rule_lookup[state];
         app.rule_lookup[state] = ((v as usize + 1) % app.num_states) as u8;
-        app.rule_text = rule_string_from_lookup(&app.rule_lookup);
+        app.rule_text = rule_id_from_lookup(&app.rule_lookup, app.num_states, app.half_width);
         app.restart_same_rule();
     }
 }

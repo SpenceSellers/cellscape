@@ -9,7 +9,7 @@ use std::sync::mpsc;
 
 use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
 use crate::rule_editor;
-use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_string_from_lookup, rule_lookup_from_string, random_rule_lookup};
+use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule_lookup};
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::BATCH_SIZE;
 
@@ -20,21 +20,17 @@ use crate::simulation::WasmSimRunner;
 
 #[cfg(target_arch = "wasm32")]
 fn read_url_hash() -> Option<(Vec<u8>, usize, usize)> {
-    use crate::simulation::rule_lookup_from_string;
+    use crate::simulation::parse_rule_id;
     let hash = web_sys::window()?.location().hash().ok()?;
-    let hash = hash.trim_start_matches('#');
-    let mut parts = hash.splitn(3, '/');
-    let rule_str = parts.next()?;
-    let k: usize = parts.next()?.parse().ok()?;
-    let half_width: usize = parts.next().and_then(|s| s.parse().ok()).unwrap_or(3);
-    let lookup = rule_lookup_from_string(rule_str, k, half_width)?;
-    Some((lookup, k, half_width))
+    let id = hash.trim_start_matches('#');
+    let (lookup, num_states, half_width) = parse_rule_id(id)?;
+    Some((lookup, num_states, half_width))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn write_url_hash(rule: &str, num_states: usize, half_width: usize) {
+fn write_url_hash(rule_id: &str) {
     if let Some(win) = web_sys::window() {
-        let _ = win.location().set_hash(&format!("{}/{}/{}", rule, num_states, half_width));
+        let _ = win.location().set_hash(rule_id);
     }
 }
 
@@ -98,9 +94,13 @@ impl CellularApp {
             Arc::new(AtomicU64::new(noise_from_slider(noise_slider).to_bits()));
         let mut num_states = 2usize;
         let mut half_width = 3usize;
-        let mut rule_lookup = initial_rule
-            .and_then(|s| rule_lookup_from_string(s, num_states, half_width))
-            .unwrap_or_else(|| random_rule_lookup(num_states, half_width, &mut rand::rng()));
+        let mut rule_lookup = random_rule_lookup(num_states, half_width, &mut rand::rng());
+
+        if let Some((lookup, k, hw)) = initial_rule.and_then(|s| parse_rule_id(s)) {
+            rule_lookup = lookup;
+            num_states = k;
+            half_width = hw;
+        }
 
         #[cfg(target_arch = "wasm32")]
         if let Some((hash_lookup, hash_k, hash_hw)) = read_url_hash() {
@@ -109,7 +109,7 @@ impl CellularApp {
             half_width = hash_hw;
         }
 
-        let rule_text = rule_string_from_lookup(&rule_lookup);
+        let rule_text = rule_id_from_lookup(&rule_lookup, num_states, half_width);
         let seed = rand::rng().random::<u64>();
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -179,7 +179,7 @@ impl CellularApp {
     pub fn restart_same_rule(&mut self) {
         self.start_sim();
         #[cfg(target_arch = "wasm32")]
-        write_url_hash(&self.rule_text, self.num_states, self.half_width);
+        write_url_hash(&self.rule_text);
     }
 
     pub fn resize_and_restart(&mut self, size: usize) {
@@ -194,7 +194,7 @@ impl CellularApp {
 
     pub fn new_rule(&mut self) {
         self.rule_lookup = random_rule_lookup(self.num_states, self.half_width, &mut rand::rng());
-        self.rule_text = rule_string_from_lookup(&self.rule_lookup);
+        self.rule_text = rule_id_from_lookup(&self.rule_lookup, self.num_states, self.half_width);
         self.clear_highlight();
         self.restart_same_rule();
     }
@@ -203,7 +203,7 @@ impl CellularApp {
         self.num_states = new_k;
         self.state_palette = build_palette(new_k);
         self.rule_lookup = random_rule_lookup(new_k, self.half_width, &mut rand::rng());
-        self.rule_text = rule_string_from_lookup(&self.rule_lookup);
+        self.rule_text = rule_id_from_lookup(&self.rule_lookup, new_k, self.half_width);
         self.clear_highlight();
         self.restart_same_rule();
     }
@@ -211,7 +211,7 @@ impl CellularApp {
     pub fn change_half_width(&mut self, new_hw: usize) {
         self.half_width = new_hw;
         self.rule_lookup = random_rule_lookup(self.num_states, new_hw, &mut rand::rng());
-        self.rule_text = rule_string_from_lookup(&self.rule_lookup);
+        self.rule_text = rule_id_from_lookup(&self.rule_lookup, self.num_states, new_hw);
         self.clear_highlight();
         self.restart_same_rule();
     }
@@ -295,7 +295,7 @@ impl eframe::App for CellularApp {
                     self.num_states = num_states;
                     self.half_width = half_width;
                     self.state_palette = build_palette(num_states);
-                    self.rule_text = rule_string_from_lookup(&self.rule_lookup);
+                    self.rule_text = rule_id_from_lookup(&self.rule_lookup, num_states, half_width);
                     self.seed = seed;
                     self.seed_text = seed.to_string();
                     self.clear_highlight();
@@ -366,17 +366,20 @@ impl eframe::App for CellularApp {
                     }
 
                     ui.horizontal(|ui| {
-                        ui.label("Rule:");
+                        ui.label("Rule ID:");
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.rule_text).desired_width(220.0),
                         );
                         if resp.lost_focus() {
-                            if let Some(lookup) = rule_lookup_from_string(&self.rule_text, self.num_states, self.half_width) {
+                            if let Some((lookup, num_states, half_width)) = parse_rule_id(&self.rule_text) {
                                 self.rule_lookup = lookup;
+                                self.num_states = num_states;
+                                self.half_width = half_width;
+                                self.state_palette = build_palette(num_states);
                                 self.clear_highlight();
                                 self.restart_same_rule();
                             } else {
-                                self.rule_text = rule_string_from_lookup(&self.rule_lookup);
+                                self.rule_text = rule_id_from_lookup(&self.rule_lookup, self.num_states, self.half_width);
                             }
                         }
                     });

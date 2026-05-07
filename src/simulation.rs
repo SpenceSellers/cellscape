@@ -206,6 +206,23 @@ pub fn rule_string_from_lookup(lookup: &[u8]) -> String {
     lookup.iter().map(|&v| char::from_digit(v as u32, 10).unwrap()).collect()
 }
 
+pub fn rule_id_from_lookup(lookup: &[u8], num_states: usize, half_width: usize) -> String {
+    let rule_width = 2 * half_width + 1;
+    let digits = rule_string_from_lookup(lookup);
+    format!("{};{};{}", num_states, rule_width, digits)
+}
+
+pub fn parse_rule_id(id: &str) -> Option<(Vec<u8>, usize, usize)> {
+    let mut parts = id.splitn(3, ';');
+    let num_states: usize = parts.next()?.parse().ok()?;
+    let rule_width: usize = parts.next()?.parse().ok()?;
+    if rule_width == 0 || rule_width % 2 == 0 { return None; }
+    let half_width = (rule_width - 1) / 2;
+    let digits_str = parts.next()?;
+    let lookup = rule_lookup_from_string(digits_str, num_states, half_width)?;
+    Some((lookup, num_states, half_width))
+}
+
 pub fn rule_lookup_from_string(s: &str, num_states: usize, half_width: usize) -> Option<Vec<u8>> {
     let width = 2 * half_width + 1;
     let expected_len = num_states.pow(width as u32);
