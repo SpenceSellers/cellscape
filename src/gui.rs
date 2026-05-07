@@ -38,17 +38,101 @@ fn wrapping_idx(i: isize, m: usize) -> usize {
     ((i % m as isize + m as isize) % m as isize) as usize
 }
 
-pub fn build_palette(num_states: usize) -> Vec<egui::Color32> {
-    let colors: &[egui::Color32] = &[
-        egui::Color32::BLACK,
-        egui::Color32::WHITE,
-        egui::Color32::from_rgb(200, 50, 50),
-        egui::Color32::from_rgb(60, 100, 220),
-        egui::Color32::from_rgb(50, 180, 80),
-        egui::Color32::from_rgb(220, 180, 40),
-        egui::Color32::from_rgb(50, 200, 200),
-        egui::Color32::from_rgb(200, 80, 200),
-    ];
+#[derive(PartialEq, Clone, Copy)]
+pub enum ColorPalette {
+    Classic,
+    Grayscale,
+    Fire,
+    Ocean,
+    Neon,
+    Pastel,
+}
+
+impl ColorPalette {
+    fn label(self) -> &'static str {
+        match self {
+            ColorPalette::Classic => "Classic",
+            ColorPalette::Grayscale => "Grayscale",
+            ColorPalette::Fire => "Fire",
+            ColorPalette::Ocean => "Ocean",
+            ColorPalette::Neon => "Neon",
+            ColorPalette::Pastel => "Pastel",
+        }
+    }
+}
+
+const ALL_PALETTES: &[ColorPalette] = &[
+    ColorPalette::Classic,
+    ColorPalette::Grayscale,
+    ColorPalette::Fire,
+    ColorPalette::Ocean,
+    ColorPalette::Neon,
+    ColorPalette::Pastel,
+];
+
+pub fn build_palette(palette: ColorPalette, num_states: usize) -> Vec<egui::Color32> {
+    let colors: &[egui::Color32] = match palette {
+        ColorPalette::Classic => &[
+            egui::Color32::BLACK,
+            egui::Color32::WHITE,
+            egui::Color32::from_rgb(200, 50, 50),
+            egui::Color32::from_rgb(60, 100, 220),
+            egui::Color32::from_rgb(50, 180, 80),
+            egui::Color32::from_rgb(220, 180, 40),
+            egui::Color32::from_rgb(50, 200, 200),
+            egui::Color32::from_rgb(200, 80, 200),
+        ],
+        ColorPalette::Grayscale => &[
+            egui::Color32::BLACK,
+            egui::Color32::WHITE,
+            egui::Color32::from_gray(64),
+            egui::Color32::from_gray(192),
+            egui::Color32::from_gray(128),
+            egui::Color32::from_gray(96),
+            egui::Color32::from_gray(160),
+            egui::Color32::from_gray(224),
+        ],
+        ColorPalette::Fire => &[
+            egui::Color32::from_rgb(10, 0, 0),
+            egui::Color32::from_rgb(200, 30, 0),
+            egui::Color32::from_rgb(255, 100, 0),
+            egui::Color32::from_rgb(255, 180, 0),
+            egui::Color32::from_rgb(255, 240, 80),
+            egui::Color32::from_rgb(255, 255, 200),
+            egui::Color32::WHITE,
+            egui::Color32::from_rgb(100, 150, 255),
+        ],
+        ColorPalette::Ocean => &[
+            egui::Color32::from_rgb(5, 5, 20),
+            egui::Color32::from_rgb(0, 30, 80),
+            egui::Color32::from_rgb(0, 80, 160),
+            egui::Color32::from_rgb(0, 140, 210),
+            egui::Color32::from_rgb(30, 190, 230),
+            egui::Color32::from_rgb(150, 230, 245),
+            egui::Color32::from_rgb(230, 245, 255),
+            egui::Color32::WHITE,
+        ],
+        ColorPalette::Neon => &[
+            egui::Color32::from_rgb(10, 10, 10),
+            egui::Color32::from_rgb(0, 255, 100),
+            egui::Color32::from_rgb(255, 50, 200),
+            egui::Color32::from_rgb(0, 200, 255),
+            egui::Color32::from_rgb(255, 200, 0),
+            egui::Color32::from_rgb(255, 50, 50),
+            egui::Color32::from_rgb(150, 50, 255),
+            egui::Color32::WHITE,
+        ],
+        ColorPalette::Pastel => &[
+            egui::Color32::from_rgb(50, 50, 70),
+            egui::Color32::from_rgb(255, 200, 210),
+            egui::Color32::from_rgb(210, 255, 210),
+            egui::Color32::from_rgb(255, 255, 200),
+            egui::Color32::from_rgb(200, 220, 255),
+            egui::Color32::from_rgb(255, 220, 190),
+            egui::Color32::from_rgb(210, 255, 255),
+            egui::Color32::from_rgb(240, 210, 255),
+        ],
+    };
     colors[..num_states.min(colors.len())].to_vec()
 }
 
@@ -82,6 +166,7 @@ pub struct CellularApp {
     pub rule_text: String,
     pub rule_lookup: Vec<u8>,
     pub state_palette: Vec<egui::Color32>,
+    pub selected_palette: ColorPalette,
     pub show_rule_editor: bool,
     pub seed: u64,
     pub seed_text: String,
@@ -134,7 +219,7 @@ impl CellularApp {
             noise_from_slider(noise_slider), seed,
         ));
 
-        let state_palette = build_palette(num_states);
+        let state_palette = build_palette(ColorPalette::Classic, num_states);
 
         CellularApp {
             #[cfg(not(target_arch = "wasm32"))]
@@ -152,6 +237,7 @@ impl CellularApp {
             rule_text,
             rule_lookup,
             state_palette,
+            selected_palette: ColorPalette::Classic,
             show_rule_editor: false,
             seed,
             seed_text: seed.to_string(),
@@ -214,7 +300,7 @@ impl CellularApp {
 
     pub fn change_num_states(&mut self, new_k: usize) {
         self.num_states = new_k;
-        self.state_palette = build_palette(new_k);
+        self.state_palette = build_palette(self.selected_palette, new_k);
         self.rule_lookup = random_rule_lookup(new_k, self.half_width, &mut rand::rng());
         self.rule_text = rule_id_from_lookup(&self.rule_lookup, new_k, self.half_width);
         self.clear_highlight();
@@ -232,6 +318,24 @@ impl CellularApp {
     pub fn clear_highlight(&mut self) {
         self.highlighted_state = None;
         self.highlighted_cell = None;
+    }
+
+    fn rebuild_texture(&mut self, ctx: &egui::Context) {
+        if self.rows_done == 0 { return; }
+        let pixels: Vec<egui::Color32> = self.cells_data[..self.rows_done * self.sim_width]
+            .iter()
+            .map(|&v| self.state_palette[v as usize])
+            .collect();
+        let image = egui::ColorImage { size: [self.sim_width, self.rows_done], pixels };
+        match &mut self.texture {
+            Some(tex) => { tex.set_partial([0, 0], image, tex_options()); }
+            None => {
+                let black = egui::ColorImage::new([self.sim_width, self.sim_height], egui::Color32::BLACK);
+                let mut tex = ctx.load_texture("sim", black, tex_options());
+                tex.set_partial([0, 0], image, tex_options());
+                self.texture = Some(tex);
+            }
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -307,7 +411,7 @@ impl eframe::App for CellularApp {
                     self.rule_lookup = lookup;
                     self.num_states = num_states;
                     self.half_width = half_width;
-                    self.state_palette = build_palette(num_states);
+                    self.state_palette = build_palette(self.selected_palette, num_states);
                     self.rule_text = rule_id_from_lookup(&self.rule_lookup, num_states, half_width);
                     self.seed = seed;
                     self.seed_text = seed.to_string();
@@ -380,7 +484,7 @@ impl eframe::App for CellularApp {
                         let new_max_k = max_num_states(self.half_width);
                         if self.num_states > new_max_k {
                             self.num_states = new_max_k;
-                            self.state_palette = build_palette(new_max_k);
+                            self.state_palette = build_palette(self.selected_palette, new_max_k);
                         }
                         let hw = self.half_width;
                         self.change_half_width(hw);
@@ -399,7 +503,7 @@ impl eframe::App for CellularApp {
                                 self.rule_lookup = lookup;
                                 self.num_states = num_states;
                                 self.half_width = half_width;
-                                self.state_palette = build_palette(num_states);
+                                self.state_palette = build_palette(self.selected_palette, num_states);
                                 self.clear_highlight();
                                 self.restart_same_rule();
                             } else {
@@ -443,6 +547,23 @@ impl eframe::App for CellularApp {
                         if !self.show_rule_editor {
                             self.clear_highlight();
                         }
+                    }
+
+                    ui.separator();
+                    ui.label("Palette:");
+                    let mut palette_changed = false;
+                    egui::ComboBox::from_id_salt("palette_select")
+                        .selected_text(self.selected_palette.label())
+                        .show_ui(ui, |ui| {
+                            for &p in ALL_PALETTES {
+                                if ui.selectable_value(&mut self.selected_palette, p, p.label()).changed() {
+                                    palette_changed = true;
+                                }
+                            }
+                        });
+                    if palette_changed {
+                        self.state_palette = build_palette(self.selected_palette, self.num_states);
+                        self.rebuild_texture(ui.ctx());
                     }
 
                     ui.separator();
