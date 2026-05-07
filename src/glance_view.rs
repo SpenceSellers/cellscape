@@ -1,7 +1,7 @@
 use eframe::egui;
 use rand::Rng;
 
-use crate::simulation::{compute_sim, random_rule, rule_string_from_lookup, CellSource, Rule, SimParameters};
+use crate::simulation::{compute_sim, random_rule, rule_string_from_lookup, CellSource, SimParameters};
 
 #[derive(PartialEq)]
 pub enum Screen {
@@ -12,13 +12,12 @@ pub enum Screen {
 
 pub enum GlanceAction {
     None,
-    SelectRule(Rule, u64),
+    SelectRule(SimParameters),
     Back,
 }
 
 struct GlanceEntry {
-    rule: Rule,
-    seed: u64,
+    params: SimParameters,
     pixels: Vec<u8>,
     texture: Option<egui::TextureHandle>,
     dirty: bool,
@@ -95,23 +94,23 @@ pub fn enter_glance_view(state: &mut GalleryState, num_states: usize, half_width
     state.entries.clear();
     for _ in 0..50 {
         let rule = random_rule(num_states, half_width, &mut rand::rng());
-        let seed = rand::rng().random::<u64>();
-        let params = SimParameters { rule: rule.clone(), noise: 0.0, seed };
+        let params = SimParameters { rule, noise: 0.0, seed: rand::rng().random::<u64>() };
         let pixels = compute_sim(&params, size, size, state.prerun_size);
-        state.entries.push(GlanceEntry { rule, seed, pixels, texture: None, dirty: false });
+        state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false });
     }
 }
 
-pub fn enter_adjacent_view(state: &mut GalleryState, base_rule: &Rule, seed: u64) {
-    state.half_width = base_rule.half_width;
+pub fn enter_adjacent_view(state: &mut GalleryState, base: &SimParameters) {
+    state.half_width = base.rule.half_width;
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
-    for entry_idx in 0..base_rule.lookup.len() {
-        let mut rule = base_rule.clone();
-        rule.lookup[entry_idx] = CellSource::Static((rule.lookup[entry_idx].get() + 1) % base_rule.num_states as u8);
-        let params = SimParameters { rule: rule.clone(), noise: 0.0, seed };
+    for entry_idx in 0..base.rule.lookup.len() {
+        let mut params = base.clone();
+        params.rule.lookup[entry_idx] = CellSource::Static(
+            (params.rule.lookup[entry_idx].get() + 1) % base.rule.num_states as u8,
+        );
         let pixels = compute_sim(&params, size, size, state.prerun_size);
-        state.entries.push(GlanceEntry { rule, seed, pixels, texture: None, dirty: false });
+        state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false });
     }
 }
 
@@ -121,8 +120,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
     for entry in &mut state.entries {
         let tex_size = entry.pixels.len().isqrt();
         if tex_size != expected_size || entry.texture.is_none() || entry.dirty {
-            let params = SimParameters { rule: entry.rule.clone(), noise: 0.0, seed: entry.seed };
-            entry.pixels = compute_sim(&params, expected_size, expected_size, state.prerun_size);
+            entry.pixels = compute_sim(&entry.params, expected_size, expected_size, state.prerun_size);
             entry.dirty = false;
             entry.texture = None;
         }
@@ -131,7 +129,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
                 .map(|&v| state.palette[v as usize])
                 .collect();
             let image = egui::ColorImage { size: [expected_size, expected_size], pixels };
-            let tex_name = format!("gallery_{}_{}", rule_string_from_lookup(&entry.rule), entry.seed);
+            let tex_name = format!("gallery_{}_{}", rule_string_from_lookup(&entry.params.rule), entry.params.seed);
             entry.texture = Some(ctx.load_texture(tex_name, image, tex_options()));
         }
     }
@@ -222,8 +220,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
         });
 
         if let Some(idx) = clicked_idx {
-            let entry = &state.entries[idx];
-            action = GlanceAction::SelectRule(entry.rule.clone(), entry.seed);
+            action = GlanceAction::SelectRule(state.entries[idx].params.clone());
         }
     });
 

@@ -9,7 +9,7 @@ use std::sync::mpsc;
 
 use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
 use crate::rule_editor;
-use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule, Rule, SimParameters};
+use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule, SimParameters};
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::BATCH_SIZE;
 
@@ -161,16 +161,14 @@ pub struct CellularApp {
     pub sim_height: usize,
     pub sim_size: usize,
     pub rule_text: String,
-    pub rule: Rule,
+    pub params: SimParameters,
     pub state_palette: Vec<egui::Color32>,
     pub selected_palette: ColorPalette,
     pub show_rule_editor: bool,
-    pub seed: u64,
     pub seed_text: String,
     pub zoom: f32,
     pub pan: egui::Vec2,
     pub view_initialized: bool,
-    pub noise_slider: f64,
     pub noise_atomic: Arc<AtomicU64>,
     pub cells_data: Vec<u8>,
     pub highlighted_state: Option<usize>,
@@ -184,37 +182,31 @@ pub struct CellularApp {
 
 impl CellularApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, sim_width: usize, sim_height: usize, initial_rule: Option<&str>) -> Self {
-        let noise_slider = 0.5f64;
-        let noise_atomic =
-            Arc::new(AtomicU64::new(noise_from_slider(noise_slider).to_bits()));
-        let mut rule = random_rule(2, 3, &mut rand::rng());
+        let mut params = SimParameters {
+            rule: random_rule(2, 3, &mut rand::rng()),
+            noise: noise_from_slider(0.5),
+            seed: rand::rng().random::<u64>(),
+        };
 
         if let Some(parsed) = initial_rule.and_then(|s| parse_rule_id(s)) {
-            rule = parsed;
+            params.rule = parsed;
         }
 
         #[cfg(target_arch = "wasm32")]
         if let Some(hash_rule) = read_url_hash() {
-            rule = hash_rule;
+            params.rule = hash_rule;
         }
 
-        let rule_text = rule_id_from_lookup(&rule);
-        let seed = rand::rng().random::<u64>();
-        let noise = noise_from_slider(noise_slider);
+        let rule_text = rule_id_from_lookup(&params.rule);
+        let noise_atomic = Arc::new(AtomicU64::new(params.noise.to_bits()));
 
         #[cfg(not(target_arch = "wasm32"))]
-        let receiver = spawn_sim(
-            SimParameters { rule: rule.clone(), noise, seed },
-            sim_width, sim_height, Arc::clone(&noise_atomic),
-        );
+        let receiver = spawn_sim(params.clone(), sim_width, sim_height, Arc::clone(&noise_atomic));
 
         #[cfg(target_arch = "wasm32")]
-        let wasm_runner = Some(WasmSimRunner::new(
-            SimParameters { rule: rule.clone(), noise, seed },
-            sim_width, sim_height,
-        ));
+        let wasm_runner = Some(WasmSimRunner::new(params.clone(), sim_width, sim_height));
 
-        let state_palette = build_palette(ColorPalette::Classic, rule.num_states);
+        let state_palette = build_palette(ColorPalette::Classic, params.rule.num_states);
 
         CellularApp {
             #[cfg(not(target_arch = "wasm32"))]
@@ -228,16 +220,14 @@ impl CellularApp {
             sim_width,
             sim_height,
             rule_text,
-            rule,
+            seed_text: params.seed.to_string(),
+            params,
             state_palette,
             selected_palette: ColorPalette::Classic,
             show_rule_editor: false,
-            seed,
-            seed_text: seed.to_string(),
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
             view_initialized: false,
-            noise_slider,
             noise_atomic,
             cells_data: vec![0u8; sim_width * sim_height],
             highlighted_state: None,
@@ -253,17 +243,11 @@ impl CellularApp {
     fn start_sim(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.receiver = spawn_sim(
-                SimParameters { rule: self.rule.clone(), noise: noise_from_slider(self.noise_slider), seed: self.seed },
-                self.sim_width, self.sim_height, Arc::clone(&self.noise_atomic),
-            );
+            self.receiver = spawn_sim(self.params.clone(), self.sim_width, self.sim_height, Arc::clone(&self.noise_atomic));
         }
         #[cfg(target_arch = "wasm32")]
         {
-            self.wasm_runner = Some(WasmSimRunner::new(
-                SimParameters { rule: self.rule.clone(), noise: noise_from_slider(self.noise_slider), seed: self.seed },
-                self.sim_width, self.sim_height,
-            ));
+            self.wasm_runner = Some(WasmSimRunner::new(self.params.clone(), self.sim_width, self.sim_height));
         }
         self.rows_done = 0;
     }
@@ -285,23 +269,23 @@ impl CellularApp {
     }
 
     pub fn new_rule(&mut self) {
-        self.rule = random_rule(self.rule.num_states, self.rule.half_width, &mut rand::rng());
-        self.rule_text = rule_id_from_lookup(&self.rule);
+        self.params.rule = random_rule(self.params.rule.num_states, self.params.rule.half_width, &mut rand::rng());
+        self.rule_text = rule_id_from_lookup(&self.params.rule);
         self.clear_highlight();
         self.restart_same_rule();
     }
 
     pub fn change_num_states(&mut self, new_k: usize) {
         self.state_palette = build_palette(self.selected_palette, new_k);
-        self.rule = random_rule(new_k, self.rule.half_width, &mut rand::rng());
-        self.rule_text = rule_id_from_lookup(&self.rule);
+        self.params.rule = random_rule(new_k, self.params.rule.half_width, &mut rand::rng());
+        self.rule_text = rule_id_from_lookup(&self.params.rule);
         self.clear_highlight();
         self.restart_same_rule();
     }
 
     pub fn change_half_width(&mut self, new_hw: usize) {
-        self.rule = random_rule(self.rule.num_states, new_hw, &mut rand::rng());
-        self.rule_text = rule_id_from_lookup(&self.rule);
+        self.params.rule = random_rule(self.params.rule.num_states, new_hw, &mut rand::rng());
+        self.rule_text = rule_id_from_lookup(&self.params.rule);
         self.clear_highlight();
         self.restart_same_rule();
     }
@@ -341,7 +325,7 @@ impl CellularApp {
         fs::create_dir_all("output").ok();
         let ts = Local::now().format("%Y-%m-%dT%H-%M-%S");
         let rule_prefix: String = self.rule_text.chars().take(16).collect();
-        let path = format!("output/{}-{}_k{}.png", ts, rule_prefix, self.rule.num_states);
+        let path = format!("output/{}-{}_k{}.png", ts, rule_prefix, self.params.rule.num_states);
         let w = self.sim_width as u32;
         let h = self.sim_height as u32;
         let pixels: Vec<u8> = self.cells_data.iter().flat_map(|&v| {
@@ -403,12 +387,11 @@ impl eframe::App for CellularApp {
                 Screen::Main => unreachable!(),
             };
             match action {
-                GlanceAction::SelectRule(rule, seed) => {
-                    self.state_palette = build_palette(self.selected_palette, rule.num_states);
-                    self.rule_text = rule_id_from_lookup(&rule);
-                    self.rule = rule;
-                    self.seed = seed;
-                    self.seed_text = seed.to_string();
+                GlanceAction::SelectRule(params) => {
+                    self.state_palette = build_palette(self.selected_palette, params.rule.num_states);
+                    self.rule_text = rule_id_from_lookup(&params.rule);
+                    self.seed_text = params.seed.to_string();
+                    self.params = params;
                     self.clear_highlight();
                     self.restart_same_rule();
                     self.current_screen = Screen::Main;
@@ -421,8 +404,7 @@ impl eframe::App for CellularApp {
             return;
         }
 
-        self.noise_atomic
-            .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
+        self.noise_atomic.store(self.params.noise.to_bits(), Ordering::Relaxed);
 
         if ctx.input(|i| i.key_pressed(egui::Key::N)) {
             self.new_rule();
@@ -459,32 +441,28 @@ impl eframe::App for CellularApp {
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
                     ui.label("States:");
-                    let max_k = max_num_states(self.rule.half_width);
-                    let mut num_states = self.rule.num_states;
-                    let states_resp = ui.add(
-                        egui::Slider::new(&mut num_states, 2..=max_k).integer(),
-                    );
+                    let max_k = max_num_states(self.params.rule.half_width);
+                    let mut num_states = self.params.rule.num_states;
+                    let states_resp = ui.add(egui::Slider::new(&mut num_states, 2..=max_k).integer());
                     if states_resp.changed() {
-                        let clamped = num_states.min(max_num_states(self.rule.half_width));
-                        self.change_num_states(clamped);
+                        self.change_num_states(num_states.min(max_num_states(self.params.rule.half_width)));
                     }
                     ui.label("Rule width:");
-                    let max_hw = max_half_width(self.rule.num_states);
-                    let mut half_width = self.rule.half_width;
+                    let max_hw = max_half_width(self.params.rule.num_states);
+                    let mut half_width = self.params.rule.half_width;
                     let rw_resp = ui.add(
                         egui::Slider::new(&mut half_width, 1..=max_hw)
                             .integer()
                             .custom_formatter(|v, _| format!("{} cells", 2 * v as usize + 1)),
                     );
                     if rw_resp.changed() {
-                        let new_max_k = max_num_states(half_width);
-                        if self.rule.num_states > new_max_k {
-                            self.state_palette = build_palette(self.selected_palette, new_max_k);
+                        if self.params.rule.num_states > max_num_states(half_width) {
+                            self.state_palette = build_palette(self.selected_palette, max_num_states(half_width));
                         }
                         self.change_half_width(half_width);
                     }
 
-                    let rule_count = (self.rule.num_states as u64).pow((2 * self.rule.half_width + 1) as u32);
+                    let rule_count = (self.params.rule.num_states as u64).pow((2 * self.params.rule.half_width + 1) as u32);
                     ui.label(egui::RichText::new(format!("{} rules", rule_count)).small().color(egui::Color32::GRAY));
 
                     ui.horizontal(|ui| {
@@ -495,12 +473,12 @@ impl eframe::App for CellularApp {
                         if resp.lost_focus() {
                             if let Some(parsed) = parse_rule_id(&self.rule_text) {
                                 self.state_palette = build_palette(self.selected_palette, parsed.num_states);
-                                self.rule = parsed;
-                                self.rule_text = rule_id_from_lookup(&self.rule);
+                                self.params.rule = parsed;
+                                self.rule_text = rule_id_from_lookup(&self.params.rule);
                                 self.clear_highlight();
                                 self.restart_same_rule();
                             } else {
-                                self.rule_text = rule_id_from_lookup(&self.rule);
+                                self.rule_text = rule_id_from_lookup(&self.params.rule);
                             }
                         }
                     });
@@ -524,14 +502,14 @@ impl eframe::App for CellularApp {
 
                     ui.separator();
                     if ui.button("Explore random rules").clicked() {
-                        self.glance_state.set_num_states(self.rule.num_states);
+                        self.glance_state.set_num_states(self.params.rule.num_states);
                         self.glance_state.set_palette(self.state_palette.clone());
-                        enter_glance_view(&mut self.glance_state, self.rule.num_states, self.rule.half_width);
+                        enter_glance_view(&mut self.glance_state, self.params.rule.num_states, self.params.rule.half_width);
                         self.current_screen = Screen::Glance;
                     }
                     if ui.button("Explore adjacent rules").clicked() {
                         self.adjacent_state.set_palette(self.state_palette.clone());
-                        enter_adjacent_view(&mut self.adjacent_state, &self.rule, self.seed);
+                        enter_adjacent_view(&mut self.adjacent_state, &self.params);
                         self.current_screen = Screen::Adjacent;
                     }
                     ui.separator();
@@ -556,7 +534,7 @@ impl eframe::App for CellularApp {
                             }
                         });
                     if palette_changed {
-                        self.state_palette = build_palette(self.selected_palette, self.rule.num_states);
+                        self.state_palette = build_palette(self.selected_palette, self.params.rule.num_states);
                         self.rebuild_texture(ui.ctx());
                     }
                     if ui.button("Cycle state colors").clicked() {
@@ -566,12 +544,17 @@ impl eframe::App for CellularApp {
 
                     ui.separator();
                     ui.label("Noise:");
+                    let mut noise_t = if self.params.noise > 0.0 {
+                        ((self.params.noise.log10() + 7.0) / 6.0).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
                     let noise_resp = ui.add(
-                        egui::Slider::new(&mut self.noise_slider, 0.0f64..=1.0)
+                        egui::Slider::new(&mut noise_t, 0.0f64..=1.0)
                             .custom_formatter(|v, _| {
-                            let n = noise_from_slider(v);
-                            if n == 0.0 { "0".to_string() } else { format!("{:.2e}", n) }
-                        })
+                                let n = noise_from_slider(v);
+                                if n == 0.0 { "0".to_string() } else { format!("{:.2e}", n) }
+                            })
                             .custom_parser(|s| {
                                 s.parse::<f64>().ok().map(|noise| {
                                     if noise > 0.0 {
@@ -583,8 +566,8 @@ impl eframe::App for CellularApp {
                             }),
                     );
                     if noise_resp.changed() {
-                        self.noise_atomic
-                            .store(noise_from_slider(self.noise_slider).to_bits(), Ordering::Relaxed);
+                        self.params.noise = noise_from_slider(noise_t);
+                        self.noise_atomic.store(self.params.noise.to_bits(), Ordering::Relaxed);
                         self.restart_same_rule();
                     }
 
@@ -606,7 +589,7 @@ impl eframe::App for CellularApp {
                         egui::TextEdit::singleline(&mut self.seed_text).desired_width(140.0),
                     );
                     if seed_resp.lost_focus() {
-                        self.seed = parse_seed(&self.seed_text);
+                        self.params.seed = parse_seed(&self.seed_text);
                         self.restart_same_rule();
                     }
                 });
@@ -664,11 +647,11 @@ impl eframe::App for CellularApp {
                     if col < self.sim_width && row < self.sim_height {
                         if row > 0 {
                             let mut state = 0usize;
-                            let hw = self.rule.half_width as isize;
+                            let hw = self.params.rule.half_width as isize;
                             for di in -hw..=hw {
                                 let nc = wrapping_idx(col as isize + di, self.sim_width);
                                 let idx = (row - 1) * self.sim_width + nc;
-                                state = state * self.rule.num_states + self.cells_data[idx] as usize;
+                                state = state * self.params.rule.num_states + self.cells_data[idx] as usize;
                             }
                             self.highlighted_state = Some(state);
                             self.highlighted_cell = Some((col, row));
@@ -695,7 +678,7 @@ impl eframe::App for CellularApp {
             if let Some((col, row)) = self.highlighted_cell {
                 if row > 0 && col < self.sim_width && row <= self.sim_height {
                     let z = self.zoom;
-                    for di in -(self.rule.half_width as isize)..=(self.rule.half_width as isize) {
+                    for di in -(self.params.rule.half_width as isize)..=(self.params.rule.half_width as isize) {
                         let nc = wrapping_idx(col as isize + di, self.sim_width);
                         let nr = row - 1;
                         let cell_rect = egui::Rect::from_min_size(

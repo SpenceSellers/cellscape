@@ -6,7 +6,7 @@ use crate::gui::CellularApp;
 pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
     let cell_sz = 9.0_f32;
     let cell_gap = 1.0_f32;
-    let nbr_cells = 2 * app.rule.half_width + 1;
+    let nbr_cells = 2 * app.params.rule.half_width + 1;
     let pat_gap = 14.0_f32;
     let out_gap = 4.0_f32;
 
@@ -14,7 +14,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
     let tile_w = nbr_w + pat_gap;
     let tile_h = cell_sz + out_gap + cell_sz;
 
-    let total_patterns = app.rule.lookup.len();
+    let total_patterns = app.params.rule.lookup.len();
 
     ui.label(egui::RichText::new("Rule editor — click an output cell to cycle its state").small());
     ui.separator();
@@ -59,7 +59,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                     }
 
                     for bit_pos in 0..nbr_cells {
-                        let digit = (state / app.rule.num_states.pow((nbr_cells - 1 - bit_pos) as u32)) % app.rule.num_states;
+                        let digit = (state / app.params.rule.num_states.pow((nbr_cells - 1 - bit_pos) as u32)) % app.params.rule.num_states;
                         let x = x0 + bit_pos as f32 * (cell_sz + cell_gap);
                         let r = egui::Rect::from_min_size(
                             egui::pos2(x, y0),
@@ -67,7 +67,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                         );
                         let fill = app.state_palette[digit];
                         painter.rect_filled(r, 1.0, fill);
-                        let border = if bit_pos == app.rule.half_width {
+                        let border = if bit_pos == app.params.rule.half_width {
                             egui::Color32::from_rgb(80, 130, 220)
                         } else {
                             egui::Color32::from_gray(80)
@@ -81,7 +81,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
                         egui::pos2(out_x, out_y),
                         egui::vec2(cell_sz, cell_sz),
                     );
-                    let output = app.rule.lookup[state].get();
+                    let output = app.params.rule.lookup[state].get();
                     let fill = app.state_palette[output as usize];
                     painter.rect_filled(out_rect, 1.0, fill);
                     painter.rect_stroke(out_rect, 1.0, egui::Stroke::new(1.0, egui::Color32::from_gray(140)));
@@ -107,9 +107,9 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
         });
 
     if let Some(state) = clicked {
-        let v = app.rule.lookup[state].get();
-        app.rule.lookup[state] = CellSource::Static(((v as usize + 1) % app.rule.num_states) as u8);
-        app.rule_text = rule_id_from_lookup(&app.rule);
+        let v = app.params.rule.lookup[state].get();
+        app.params.rule.lookup[state] = CellSource::Static(((v as usize + 1) % app.params.rule.num_states) as u8);
+        app.rule_text = rule_id_from_lookup(&app.params.rule);
         app.restart_same_rule();
     }
 }
