@@ -9,7 +9,7 @@ use std::sync::mpsc;
 
 use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
 use crate::rule_editor;
-use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule_lookup};
+use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule_lookup, CellSource};
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::BATCH_SIZE;
 
@@ -164,7 +164,7 @@ pub struct CellularApp {
     pub num_states: usize,
     pub half_width: usize,
     pub rule_text: String,
-    pub rule_lookup: Vec<u8>,
+    pub rule_lookup: Vec<CellSource>,
     pub state_palette: Vec<egui::Color32>,
     pub selected_palette: ColorPalette,
     pub show_rule_editor: bool,

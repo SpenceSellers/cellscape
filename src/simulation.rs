@@ -4,6 +4,9 @@ use std::sync::{Arc, atomic::{AtomicU64, Ordering}, mpsc};
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 
+mod cell_source;
+pub use cell_source::CellSource;
+
 pub struct Looped<'a> {
     slice: &'a [u8],
     len: isize,
@@ -30,13 +33,13 @@ pub fn all_states(num_states: usize) -> Vec<u8> {
 }
 
 pub struct Rule {
-    lookup: Vec<u8>,
+    lookup: Vec<CellSource>,
     half_width: isize,
     num_states: usize,
 }
 
 impl Rule {
-    pub fn from_lookup(lookup: Vec<u8>, num_states: usize, half_width: usize) -> Self {
+    pub fn from_lookup(lookup: Vec<CellSource>, num_states: usize, half_width: usize) -> Self {
         Self { lookup, half_width: half_width as isize, num_states }
     }
 
@@ -47,7 +50,7 @@ impl Rule {
         for di in -self.half_width..=self.half_width {
             state = state * self.num_states + arena.get(i_isize + di) as usize;
         }
-        self.lookup[state]
+        self.lookup[state].get()
     }
 }
 
@@ -90,7 +93,7 @@ pub struct SimRunner {
 }
 
 impl SimRunner {
-    pub fn new(lookup: Vec<u8>, num_states: usize, half_width: usize, sim_width: usize, sim_height: usize, seed: u64) -> Self {
+    pub fn new(lookup: Vec<CellSource>, num_states: usize, half_width: usize, sim_width: usize, sim_height: usize, seed: u64) -> Self {
         Self {
             rule: Rule::from_lookup(lookup, num_states, half_width),
             current: build_arena(sim_width, &all_states(num_states), seed),
@@ -126,7 +129,7 @@ impl SimRunner {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_sim(
-    lookup: Vec<u8>,
+    lookup: Vec<CellSource>,
     num_states: usize,
     half_width: usize,
     sim_width: usize,
@@ -159,7 +162,7 @@ pub struct WasmSimRunner {
 #[cfg(target_arch = "wasm32")]
 impl WasmSimRunner {
     pub fn new(
-        lookup: Vec<u8>,
+        lookup: Vec<CellSource>,
         num_states: usize,
         half_width: usize,
         sim_width: usize,
@@ -176,7 +179,7 @@ impl WasmSimRunner {
 }
 
 pub fn compute_sim(
-    lookup: &[u8],
+    lookup: &[CellSource],
     num_states: usize,
     half_width: usize,
     sim_width: usize,
@@ -202,17 +205,17 @@ pub fn compute_sim(
     result
 }
 
-pub fn rule_string_from_lookup(lookup: &[u8]) -> String {
-    lookup.iter().map(|&v| char::from_digit(v as u32, 10).unwrap()).collect()
+pub fn rule_string_from_lookup(lookup: &[CellSource]) -> String {
+    lookup.iter().map(|v| char::from_digit(v.get() as u32, 10).unwrap()).collect()
 }
 
-pub fn rule_id_from_lookup(lookup: &[u8], num_states: usize, half_width: usize) -> String {
+pub fn rule_id_from_lookup(lookup: &[CellSource], num_states: usize, half_width: usize) -> String {
     let rule_width = 2 * half_width + 1;
     let digits = rule_string_from_lookup(lookup);
     format!("{};{};{}", num_states, rule_width, digits)
 }
 
-pub fn parse_rule_id(id: &str) -> Option<(Vec<u8>, usize, usize)> {
+pub fn parse_rule_id(id: &str) -> Option<(Vec<CellSource>, usize, usize)> {
     let mut parts = id.splitn(3, ';');
     let num_states: usize = parts.next()?.parse().ok()?;
     let rule_width: usize = parts.next()?.parse().ok()?;
@@ -223,18 +226,18 @@ pub fn parse_rule_id(id: &str) -> Option<(Vec<u8>, usize, usize)> {
     Some((lookup, num_states, half_width))
 }
 
-pub fn rule_lookup_from_string(s: &str, num_states: usize, half_width: usize) -> Option<Vec<u8>> {
+pub fn rule_lookup_from_string(s: &str, num_states: usize, half_width: usize) -> Option<Vec<CellSource>> {
     let width = 2 * half_width + 1;
     let expected_len = num_states.pow(width as u32);
     if s.len() != expected_len { return None; }
     s.chars()
-        .map(|c| c.to_digit(10).and_then(|d| if (d as usize) < num_states { Some(d as u8) } else { None }))
+        .map(|c| c.to_digit(10).and_then(|d| if (d as usize) < num_states { Some(CellSource::Static(d as u8)) } else { None }))
         .collect()
 }
 
-pub fn random_rule_lookup(num_states: usize, half_width: usize, rng: &mut impl Rng) -> Vec<u8> {
+pub fn random_rule_lookup(num_states: usize, half_width: usize, rng: &mut impl Rng) -> Vec<CellSource> {
     let width = 2 * half_width + 1;
-    (0..num_states.pow(width as u32)).map(|_| rng.random_range(0..num_states as u8)).collect()
+    (0..num_states.pow(width as u32)).map(|_| CellSource::Static(rng.random_range(0..num_states as u8))).collect()
 }
 
 pub fn parse_seed(text: &str) -> u64 {

@@ -1,7 +1,7 @@
 use eframe::egui;
 use rand::Rng;
 
-use crate::simulation::{compute_sim, random_rule_lookup, rule_string_from_lookup};
+use crate::simulation::{compute_sim, random_rule_lookup, rule_string_from_lookup, CellSource};
 
 #[derive(PartialEq)]
 pub enum Screen {
@@ -12,12 +12,12 @@ pub enum Screen {
 
 pub enum GlanceAction {
     None,
-    SelectRule(Vec<u8>, usize, usize, u64),
+    SelectRule(Vec<CellSource>, usize, usize, u64),
     Back,
 }
 
 struct GlanceEntry {
-    lookup: Vec<u8>,
+    lookup: Vec<CellSource>,
     num_states: usize,
     half_width: usize,
     seed: u64,
@@ -103,14 +103,14 @@ pub fn enter_glance_view(state: &mut GalleryState, num_states: usize, half_width
     }
 }
 
-pub fn enter_adjacent_view(state: &mut GalleryState, base_lookup: &[u8], num_states: usize, half_width: usize, seed: u64) {
+pub fn enter_adjacent_view(state: &mut GalleryState, base_lookup: &[CellSource], num_states: usize, half_width: usize, seed: u64) {
     state.half_width = half_width;
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
     let n_entries = base_lookup.len();
     for entry_idx in 0..n_entries {
         let mut lookup = base_lookup.to_vec();
-        lookup[entry_idx] = (lookup[entry_idx] + 1) % num_states as u8;
+        lookup[entry_idx] = CellSource::Static((lookup[entry_idx].get() + 1) % num_states as u8);
         let pixels = compute_sim(&lookup, num_states, half_width, size, size, 0.0, seed, state.prerun_size);
         state.entries.push(GlanceEntry { lookup, num_states, half_width, seed, pixels, texture: None, dirty: false });
     }
