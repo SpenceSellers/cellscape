@@ -69,12 +69,12 @@ pub fn build_palette(palette: ColorPalette, num_states: usize) -> Vec<egui::Colo
         ColorPalette::Classic => &[
             egui::Color32::BLACK,
             egui::Color32::WHITE,
-            egui::Color32::from_rgb(200, 50, 50),
-            egui::Color32::from_rgb(60, 100, 220),
-            egui::Color32::from_rgb(50, 180, 80),
-            egui::Color32::from_rgb(220, 180, 40),
-            egui::Color32::from_rgb(50, 200, 200),
-            egui::Color32::from_rgb(200, 80, 200),
+            egui::Color32::from_rgb(55, 200, 80),    // vivid green
+            egui::Color32::from_rgb(255, 105, 30),   // punchy orange
+            egui::Color32::from_rgb(60, 115, 235),   // cobalt blue
+            egui::Color32::from_rgb(210, 50, 195),   // vivid magenta
+            egui::Color32::from_rgb(235, 195, 30),   // bright gold
+            egui::Color32::from_rgb(35, 190, 185),   // vivid teal
         ],
         ColorPalette::Grayscale => &[
             egui::Color32::BLACK,
