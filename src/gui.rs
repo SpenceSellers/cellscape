@@ -4,6 +4,7 @@ use rand::Rng;
 use std::sync::mpsc;
 
 use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
+use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_editor;
 use crate::rule_meta::{draw_rule_meta_params, max_num_states};
 use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule, SimParameters};
@@ -32,104 +33,6 @@ fn write_url_hash(rule_id: &str) {
 
 fn wrapping_idx(i: isize, m: usize) -> usize {
     ((i % m as isize + m as isize) % m as isize) as usize
-}
-
-#[derive(PartialEq, Clone, Copy)]
-pub enum ColorPalette {
-    Classic,
-    Grayscale,
-    GrayscaleDark,
-    GrayscaleLight,
-    Neon,
-    Pastel,
-}
-
-impl ColorPalette {
-    fn label(self) -> &'static str {
-        match self {
-            ColorPalette::Classic => "Classic",
-            ColorPalette::Grayscale => "Grayscale",
-            ColorPalette::GrayscaleDark => "Grayscale (Dark)",
-            ColorPalette::GrayscaleLight => "Grayscale (Light)",
-            ColorPalette::Neon => "Neon",
-            ColorPalette::Pastel => "Pastel",
-        }
-    }
-}
-
-const ALL_PALETTES: &[ColorPalette] = &[
-    ColorPalette::Classic,
-    ColorPalette::Grayscale,
-    ColorPalette::GrayscaleDark,
-    ColorPalette::GrayscaleLight,
-    ColorPalette::Neon,
-    ColorPalette::Pastel,
-];
-
-pub fn build_palette(palette: ColorPalette, num_states: usize) -> Vec<egui::Color32> {
-    let colors: &[egui::Color32] = match palette {
-        ColorPalette::Classic => &[
-            egui::Color32::BLACK,
-            egui::Color32::WHITE,
-            egui::Color32::from_rgb(55, 200, 80),    // vivid green
-            egui::Color32::from_rgb(255, 105, 30),   // punchy orange
-            egui::Color32::from_rgb(60, 115, 235),   // cobalt blue
-            egui::Color32::from_rgb(210, 50, 195),   // vivid magenta
-            egui::Color32::from_rgb(235, 195, 30),   // bright gold
-            egui::Color32::from_rgb(35, 190, 185),   // vivid teal
-        ],
-        ColorPalette::Grayscale => &[
-            egui::Color32::BLACK,
-            egui::Color32::WHITE,
-            egui::Color32::from_gray(64),
-            egui::Color32::from_gray(192),
-            egui::Color32::from_gray(128),
-            egui::Color32::from_gray(96),
-            egui::Color32::from_gray(160),
-            egui::Color32::from_gray(224),
-        ],
-        ColorPalette::GrayscaleDark => &[
-            egui::Color32::from_gray(0),
-            egui::Color32::from_gray(36),
-            egui::Color32::from_gray(72),
-            egui::Color32::from_gray(108),
-            egui::Color32::from_gray(144),
-            egui::Color32::from_gray(180),
-            egui::Color32::from_gray(210),
-            egui::Color32::from_gray(235),
-        ],
-        ColorPalette::GrayscaleLight => &[
-            egui::Color32::from_gray(255),
-            egui::Color32::from_gray(220),
-            egui::Color32::from_gray(184),
-            egui::Color32::from_gray(148),
-            egui::Color32::from_gray(112),
-            egui::Color32::from_gray(76),
-            egui::Color32::from_gray(45),
-            egui::Color32::from_gray(20),
-        ],
-        ColorPalette::Neon => &[
-            egui::Color32::from_rgb(10, 10, 10),
-            egui::Color32::from_rgb(0, 255, 100),
-            egui::Color32::from_rgb(255, 50, 200),
-            egui::Color32::from_rgb(0, 200, 255),
-            egui::Color32::from_rgb(255, 200, 0),
-            egui::Color32::from_rgb(255, 50, 50),
-            egui::Color32::from_rgb(150, 50, 255),
-            egui::Color32::WHITE,
-        ],
-        ColorPalette::Pastel => &[
-            egui::Color32::from_rgb(50, 50, 70),
-            egui::Color32::from_rgb(255, 200, 210),
-            egui::Color32::from_rgb(210, 255, 210),
-            egui::Color32::from_rgb(255, 255, 200),
-            egui::Color32::from_rgb(200, 220, 255),
-            egui::Color32::from_rgb(255, 220, 190),
-            egui::Color32::from_rgb(210, 255, 255),
-            egui::Color32::from_rgb(240, 210, 255),
-        ],
-    };
-    colors[..num_states.min(colors.len())].to_vec()
 }
 
 
@@ -275,10 +178,6 @@ impl CellularApp {
     pub fn clear_highlight(&mut self) {
         self.highlighted_state = None;
         self.highlighted_cell = None;
-    }
-
-    pub fn cycle_palette(&mut self) {
-        self.state_palette.rotate_left(1);
     }
 
     fn rebuild_texture(&mut self, ctx: &egui::Context) {
@@ -477,12 +376,14 @@ impl eframe::App for CellularApp {
                     ui.separator();
                     if ui.button("Explore random rules").clicked() {
                         self.glance_state.set_num_states(self.params.rule.num_states);
+                        self.glance_state.selected_palette = self.selected_palette;
                         self.glance_state.set_palette(self.state_palette.clone());
                         self.glance_state.noise = self.params.noise;
                         enter_glance_view(&mut self.glance_state, self.params.rule.num_states, self.params.rule.half_width);
                         self.current_screen = Screen::Glance;
                     }
                     if ui.button("Explore adjacent rules").clicked() {
+                        self.adjacent_state.selected_palette = self.selected_palette;
                         self.adjacent_state.set_palette(self.state_palette.clone());
                         enter_adjacent_view(&mut self.adjacent_state, &self.params);
                         self.current_screen = Screen::Adjacent;
@@ -497,23 +398,7 @@ impl eframe::App for CellularApp {
                         }
                     }
                     ui.separator();
-                    ui.label("Palette:");
-                    let mut palette_changed = false;
-                    egui::ComboBox::from_id_salt("palette_select")
-                        .selected_text(self.selected_palette.label())
-                        .show_ui(ui, |ui| {
-                            for &p in ALL_PALETTES {
-                                if ui.selectable_value(&mut self.selected_palette, p, p.label()).changed() {
-                                    palette_changed = true;
-                                }
-                            }
-                        });
-                    if palette_changed {
-                        self.state_palette = build_palette(self.selected_palette, self.params.rule.num_states);
-                        self.rebuild_texture(ui.ctx());
-                    }
-                    if ui.button("Cycle state colors").clicked() {
-                        self.cycle_palette();
+                    if draw_palette_params(ui, &mut self.selected_palette, &mut self.state_palette, self.params.rule.num_states) {
                         self.rebuild_texture(ui.ctx());
                     }
 

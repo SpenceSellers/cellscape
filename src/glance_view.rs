@@ -1,6 +1,7 @@
 use eframe::egui;
 use rand::Rng;
 
+use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_meta::draw_rule_meta_params;
 use crate::simulation::{compute_sim, random_rule, rule_string_from_lookup, CellSource, SimParameters};
 
@@ -35,6 +36,7 @@ pub struct GalleryState {
     num_states: usize,
     half_width: usize,
     pub noise: f64,
+    pub selected_palette: ColorPalette,
     pub palette: Vec<egui::Color32>,
 }
 
@@ -51,6 +53,7 @@ impl GalleryState {
             num_states: 2,
             half_width: 3,
             noise: 0.0,
+            selected_palette: ColorPalette::Classic,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
         }
     }
@@ -67,6 +70,7 @@ impl GalleryState {
             num_states: 2,
             half_width: 3,
             noise: 0.0,
+            selected_palette: ColorPalette::Classic,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
         }
     }
@@ -164,12 +168,21 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
         if (meta_resp.num_states_changed || meta_resp.half_width_changed) && state.allow_reroll {
             state.noise = noise;
             enter_glance_view(state, num_states, half_width);
+            state.palette = build_palette(state.selected_palette, state.num_states);
         }
         if meta_resp.noise_changed {
             state.noise = noise;
             for entry in &mut state.entries {
                 entry.params.noise = noise;
                 entry.dirty = true;
+            }
+        }
+
+        ui.separator();
+
+        if draw_palette_params(ui, &mut state.selected_palette, &mut state.palette, state.num_states) {
+            for entry in &mut state.entries {
+                entry.texture = None;
             }
         }
 
