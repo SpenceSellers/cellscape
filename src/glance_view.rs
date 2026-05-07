@@ -136,37 +136,35 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
 
     let mut action = GlanceAction::None;
 
-    egui::TopBottomPanel::top("gallery_top").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            ui.heading(state.title);
-            if state.allow_reroll
-                && (ui.button("Re-roll (E)").clicked()
-                    || ui.input(|i| i.key_pressed(egui::Key::E)))
-            {
-                enter_glance_view(state, state.num_states, state.half_width);
+    egui::SidePanel::right("gallery_side").show(ctx, |ui| {
+        ui.heading(state.title);
+        if state.allow_reroll
+            && (ui.button("Re-roll (E)").clicked()
+                || ui.input(|i| i.key_pressed(egui::Key::E)))
+        {
+            enter_glance_view(state, state.num_states, state.half_width);
+        }
+        if ui.button("Back to Main").clicked() {
+            action = GlanceAction::Back;
+        }
+        ui.separator();
+        ui.label("Render Scale:");
+        let mut scale = state.render_scale;
+        if ui.add(egui::Slider::new(&mut scale, 1..=16).text("x")).changed() {
+            state.render_scale = scale;
+        }
+        ui.separator();
+        ui.label("Columns:");
+        ui.add(egui::Slider::new(&mut state.cols, 1..=20));
+        ui.separator();
+        ui.label("Pre-run Steps:");
+        let mut prerun = state.prerun_size;
+        if ui.add(egui::Slider::new(&mut prerun, 0..=500)).changed() {
+            state.prerun_size = prerun;
+            for entry in &mut state.entries {
+                entry.dirty = true;
             }
-            if ui.button("Back to Main").clicked() {
-                action = GlanceAction::Back;
-            }
-            ui.separator();
-            ui.label("Render Scale:");
-            let mut scale = state.render_scale;
-            if ui.add(egui::Slider::new(&mut scale, 1..=16).text("x")).changed() {
-                state.render_scale = scale;
-            }
-            ui.separator();
-            ui.label("Columns:");
-            ui.add(egui::Slider::new(&mut state.cols, 1..=20));
-            ui.separator();
-            ui.label("Pre-run Steps:");
-            let mut prerun = state.prerun_size;
-            if ui.add(egui::Slider::new(&mut prerun, 0..=500)).changed() {
-                state.prerun_size = prerun;
-                for entry in &mut state.entries {
-                    entry.dirty = true;
-                }
-            }
-        });
+        }
     });
 
     egui::CentralPanel::default().show(ctx, |ui| {
