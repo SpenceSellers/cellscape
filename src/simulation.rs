@@ -7,6 +7,9 @@ use std::thread;
 mod cell_source;
 pub use cell_source::CellSource;
 
+mod rule_io;
+pub use rule_io::{rule_string_from_lookup, rule_id_from_lookup, parse_rule_id, rule_lookup_from_string};
+
 pub struct Looped<'a> {
     slice: &'a [u8],
     len: isize,
@@ -196,39 +199,6 @@ pub fn compute_sim(
         }
     }
     result
-}
-
-pub fn rule_string_from_lookup(rule: &Rule) -> String {
-    rule.lookup.iter().map(|v| match v.static_value() {
-        Some(d) => char::from_digit(d as u32, 10).unwrap(),
-        None => '?',
-    }).collect()
-}
-
-pub fn rule_id_from_lookup(rule: &Rule) -> String {
-    let rule_width = 2 * rule.half_width + 1;
-    let digits = rule_string_from_lookup(rule);
-    format!("{};{};{}", rule.num_states, rule_width, digits)
-}
-
-pub fn parse_rule_id(id: &str) -> Option<Rule> {
-    let mut parts = id.splitn(3, ';');
-    let num_states: usize = parts.next()?.parse().ok()?;
-    let rule_width: usize = parts.next()?.parse().ok()?;
-    if rule_width == 0 || rule_width % 2 == 0 { return None; }
-    let half_width = (rule_width - 1) / 2;
-    let digits_str = parts.next()?;
-    rule_lookup_from_string(digits_str, num_states, half_width)
-}
-
-pub fn rule_lookup_from_string(s: &str, num_states: usize, half_width: usize) -> Option<Rule> {
-    let width = 2 * half_width + 1;
-    let expected_len = num_states.pow(width as u32);
-    if s.len() != expected_len { return None; }
-    let lookup: Option<Vec<CellSource>> = s.chars()
-        .map(|c| c.to_digit(10).and_then(|d| if (d as usize) < num_states { Some(CellSource::Static(d as u8)) } else { None }))
-        .collect();
-    Some(Rule::new(lookup?, num_states, half_width))
 }
 
 pub fn random_rule(num_states: usize, half_width: usize, rng: &mut impl Rng) -> Rule {
