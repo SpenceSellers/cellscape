@@ -78,6 +78,52 @@ pub struct SimBatch {
     pub pixels: Vec<u8>,
 }
 
+pub struct SimRunner {
+    rule: Rule,
+    num_states: usize,
+    current: Vec<u8>,
+    noise_rng: SmallRng,
+    next: Vec<u8>,
+    next_output_row: usize,
+    sim_width: usize,
+    sim_height: usize,
+}
+
+impl SimRunner {
+    pub fn new(lookup: Vec<u8>, num_states: usize, sim_width: usize, sim_height: usize, seed: u64) -> Self {
+        Self {
+            rule: Rule::from_lookup(lookup, num_states),
+            current: build_arena(sim_width, &all_states(num_states), seed),
+            noise_rng: SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15),
+            next: vec![0u8; sim_width],
+            next_output_row: 0,
+            num_states,
+            sim_width,
+            sim_height,
+        }
+    }
+
+    pub fn step_batch(&mut self, noise: f64) -> Option<SimBatch> {
+        if self.next_output_row >= self.sim_height {
+            return None;
+        }
+        let start = self.next_output_row;
+        let mut pixels = Vec::with_capacity(BATCH_SIZE * self.sim_width);
+        if start == 0 {
+            pixels.extend_from_slice(&self.current);
+            self.next_output_row = 1;
+        }
+        while pixels.len() < BATCH_SIZE * self.sim_width && self.next_output_row < self.sim_height {
+            apply_noise(&mut self.current, noise, self.num_states, &mut self.noise_rng);
+            apply_step(&self.current, &self.rule, &mut self.next);
+            std::mem::swap(&mut self.current, &mut self.next);
+            pixels.extend_from_slice(&self.current);
+            self.next_output_row += 1;
+        }
+        Some(SimBatch { start, pixels })
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_sim(
     lookup: Vec<u8>,
@@ -89,38 +135,14 @@ pub fn spawn_sim(
 ) -> mpsc::Receiver<SimBatch> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let rule = Rule::from_lookup(lookup, num_states);
-        let mut current = build_arena(sim_width, &all_states(num_states), seed);
-        let mut noise_rng = SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15);
-        let mut next = vec![0u8; sim_width];
-
-        let mut batch_pixels = Vec::with_capacity(BATCH_SIZE * sim_width);
-        let mut batch_start = 0usize;
-
-        batch_pixels.extend_from_slice(&current);
-
+        let mut runner = SimRunner::new(lookup, num_states, sim_width, sim_height, seed);
         let t0 = std::time::Instant::now();
-        for row in 1..sim_height {
+        loop {
             let noise = f64::from_bits(noise_atomic.load(Ordering::Relaxed));
-            apply_noise(&mut current, noise, num_states, &mut noise_rng);
-            apply_step(&current, &rule, &mut next);
-            std::mem::swap(&mut current, &mut next);
-
-            batch_pixels.extend_from_slice(&current);
-
-            if batch_pixels.len() == BATCH_SIZE * sim_width {
-                let pixels = std::mem::replace(
-                    &mut batch_pixels,
-                    Vec::with_capacity(BATCH_SIZE * sim_width),
-                );
-                if tx.send(SimBatch { start: batch_start, pixels }).is_err() {
-                    return;
-                }
-                batch_start = row + 1;
+            match runner.step_batch(noise) {
+                Some(batch) => { if tx.send(batch).is_err() { return; } }
+                None => break,
             }
-        }
-        if !batch_pixels.is_empty() {
-            tx.send(SimBatch { start: batch_start, pixels: batch_pixels }).ok();
         }
         println!("simulation done in {:.2?}", t0.elapsed());
     });
@@ -129,14 +151,7 @@ pub fn spawn_sim(
 
 #[cfg(target_arch = "wasm32")]
 pub struct WasmSimRunner {
-    rule: Rule,
-    num_states: usize,
-    current: Vec<u8>,
-    noise_rng: SmallRng,
-    next: Vec<u8>,
-    next_output_row: usize,
-    pub sim_width: usize,
-    pub sim_height: usize,
+    runner: SimRunner,
     pub noise: f64,
 }
 
@@ -150,35 +165,11 @@ impl WasmSimRunner {
         noise: f64,
         seed: u64,
     ) -> Self {
-        let rule = Rule::from_lookup(lookup, num_states);
-        let current = build_arena(sim_width, &all_states(num_states), seed);
-        let noise_rng = SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15);
-        let next = vec![0u8; sim_width];
-        Self { rule, num_states, current, noise_rng, next, next_output_row: 0, sim_width, sim_height, noise }
+        Self { runner: SimRunner::new(lookup, num_states, sim_width, sim_height, seed), noise }
     }
 
     pub fn step_batch(&mut self) -> Option<SimBatch> {
-        if self.next_output_row >= self.sim_height {
-            return None;
-        }
-
-        let start = self.next_output_row;
-        let mut pixels = Vec::with_capacity(BATCH_SIZE * self.sim_width);
-
-        if start == 0 {
-            pixels.extend_from_slice(&self.current);
-            self.next_output_row = 1;
-        }
-
-        while pixels.len() < BATCH_SIZE * self.sim_width && self.next_output_row < self.sim_height {
-            apply_noise(&mut self.current, self.noise, self.num_states, &mut self.noise_rng);
-            apply_step(&self.current, &self.rule, &mut self.next);
-            std::mem::swap(&mut self.current, &mut self.next);
-            pixels.extend_from_slice(&self.current);
-            self.next_output_row += 1;
-        }
-
-        Some(SimBatch { start, pixels })
+        self.runner.step_batch(self.noise)
     }
 }
 
