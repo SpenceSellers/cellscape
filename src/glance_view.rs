@@ -26,20 +26,6 @@ struct GlanceEntry {
     dirty: bool,
 }
 
-fn palette_for(num_states: usize) -> Vec<egui::Color32> {
-    let colors: &[egui::Color32] = &[
-        egui::Color32::BLACK,
-        egui::Color32::WHITE,
-        egui::Color32::from_rgb(200, 50, 50),
-        egui::Color32::from_rgb(60, 100, 220),
-        egui::Color32::from_rgb(50, 180, 80),
-        egui::Color32::from_rgb(220, 180, 40),
-        egui::Color32::from_rgb(50, 200, 200),
-        egui::Color32::from_rgb(200, 80, 200),
-    ];
-    colors[..num_states.min(colors.len())].to_vec()
-}
-
 pub struct GalleryState {
     entries: Vec<GlanceEntry>,
     sim_size: usize,
@@ -50,6 +36,7 @@ pub struct GalleryState {
     allow_reroll: bool,
     num_states: usize,
     half_width: usize,
+    pub palette: Vec<egui::Color32>,
 }
 
 impl GalleryState {
@@ -64,6 +51,7 @@ impl GalleryState {
             allow_reroll: true,
             num_states: 2,
             half_width: 3,
+            palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
         }
     }
 
@@ -78,11 +66,19 @@ impl GalleryState {
             allow_reroll: false,
             num_states: 2,
             half_width: 3,
+            palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
         }
     }
 
     pub fn set_num_states(&mut self, num_states: usize) {
         self.num_states = num_states;
+    }
+
+    pub fn set_palette(&mut self, palette: Vec<egui::Color32>) {
+        self.palette = palette;
+        for entry in &mut self.entries {
+            entry.texture = None;
+        }
     }
 }
 
@@ -130,9 +126,8 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
             entry.texture = None;
         }
         if entry.texture.is_none() {
-            let palette = palette_for(entry.num_states);
             let pixels: Vec<egui::Color32> = entry.pixels.iter()
-                .map(|&v| palette[v as usize])
+                .map(|&v| state.palette[v as usize])
                 .collect();
             let image = egui::ColorImage { size: [expected_size, expected_size], pixels };
             let tex_name = format!("gallery_{}_{}", rule_string_from_lookup(&entry.lookup), entry.seed);

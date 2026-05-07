@@ -42,8 +42,6 @@ fn wrapping_idx(i: isize, m: usize) -> usize {
 pub enum ColorPalette {
     Classic,
     Grayscale,
-    Fire,
-    Ocean,
     Neon,
     Pastel,
 }
@@ -53,8 +51,6 @@ impl ColorPalette {
         match self {
             ColorPalette::Classic => "Classic",
             ColorPalette::Grayscale => "Grayscale",
-            ColorPalette::Fire => "Fire",
-            ColorPalette::Ocean => "Ocean",
             ColorPalette::Neon => "Neon",
             ColorPalette::Pastel => "Pastel",
         }
@@ -64,8 +60,6 @@ impl ColorPalette {
 const ALL_PALETTES: &[ColorPalette] = &[
     ColorPalette::Classic,
     ColorPalette::Grayscale,
-    ColorPalette::Fire,
-    ColorPalette::Ocean,
     ColorPalette::Neon,
     ColorPalette::Pastel,
 ];
@@ -91,26 +85,6 @@ pub fn build_palette(palette: ColorPalette, num_states: usize) -> Vec<egui::Colo
             egui::Color32::from_gray(96),
             egui::Color32::from_gray(160),
             egui::Color32::from_gray(224),
-        ],
-        ColorPalette::Fire => &[
-            egui::Color32::from_rgb(10, 0, 0),
-            egui::Color32::from_rgb(200, 30, 0),
-            egui::Color32::from_rgb(255, 100, 0),
-            egui::Color32::from_rgb(255, 180, 0),
-            egui::Color32::from_rgb(255, 240, 80),
-            egui::Color32::from_rgb(255, 255, 200),
-            egui::Color32::WHITE,
-            egui::Color32::from_rgb(100, 150, 255),
-        ],
-        ColorPalette::Ocean => &[
-            egui::Color32::from_rgb(5, 5, 20),
-            egui::Color32::from_rgb(0, 30, 80),
-            egui::Color32::from_rgb(0, 80, 160),
-            egui::Color32::from_rgb(0, 140, 210),
-            egui::Color32::from_rgb(30, 190, 230),
-            egui::Color32::from_rgb(150, 230, 245),
-            egui::Color32::from_rgb(230, 245, 255),
-            egui::Color32::WHITE,
         ],
         ColorPalette::Neon => &[
             egui::Color32::from_rgb(10, 10, 10),
@@ -318,6 +292,10 @@ impl CellularApp {
     pub fn clear_highlight(&mut self) {
         self.highlighted_state = None;
         self.highlighted_cell = None;
+    }
+
+    pub fn cycle_palette(&mut self) {
+        self.state_palette.rotate_left(1);
     }
 
     fn rebuild_texture(&mut self, ctx: &egui::Context) {
@@ -532,10 +510,12 @@ impl eframe::App for CellularApp {
                     ui.separator();
                     if ui.button("Explore random rules").clicked() {
                         self.glance_state.set_num_states(self.num_states);
+                        self.glance_state.set_palette(self.state_palette.clone());
                         enter_glance_view(&mut self.glance_state, self.num_states, self.half_width);
                         self.current_screen = Screen::Glance;
                     }
                     if ui.button("Explore adjacent rules").clicked() {
+                        self.adjacent_state.set_palette(self.state_palette.clone());
                         enter_adjacent_view(&mut self.adjacent_state, &self.rule_lookup, self.num_states, self.half_width, self.seed);
                         self.current_screen = Screen::Adjacent;
                     }
@@ -548,7 +528,6 @@ impl eframe::App for CellularApp {
                             self.clear_highlight();
                         }
                     }
-
                     ui.separator();
                     ui.label("Palette:");
                     let mut palette_changed = false;
@@ -563,6 +542,10 @@ impl eframe::App for CellularApp {
                         });
                     if palette_changed {
                         self.state_palette = build_palette(self.selected_palette, self.num_states);
+                        self.rebuild_texture(ui.ctx());
+                    }
+                    if ui.button("Cycle state colors").clicked() {
+                        self.cycle_palette();
                         self.rebuild_texture(ui.ctx());
                     }
 
