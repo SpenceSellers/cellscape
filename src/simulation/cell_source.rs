@@ -1,9 +1,49 @@
 use rand::{Rng, rngs::SmallRng};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone)]
 pub enum CellSource {
     Static(u8),
     Random { cumulative: Vec<f32>, values: Vec<u8> },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum CellSourceHelper {
+    Static(u8),
+    Random { weights: Vec<(u8, f32)> },
+}
+
+impl Serialize for CellSource {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let helper = match self {
+            CellSource::Static(d) => CellSourceHelper::Static(*d),
+            CellSource::Random { cumulative, values } => {
+                let mut weights = Vec::with_capacity(values.len());
+                let mut prev = 0.0f32;
+                for (&cum, &val) in cumulative.iter().zip(values.iter()) {
+                    weights.push((val, cum - prev));
+                    prev = cum;
+                }
+                CellSourceHelper::Random { weights }
+            }
+        };
+        helper.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for CellSource {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        match CellSourceHelper::deserialize(d)? {
+            CellSourceHelper::Static(v) => Ok(CellSource::Static(v)),
+            CellSourceHelper::Random { weights } => {
+                if weights.is_empty() {
+                    return Err(serde::de::Error::custom("empty weights"));
+                }
+                Ok(CellSource::random(weights.into_iter().map(|(s, w)| (w, s)).collect()))
+            }
+        }
+    }
 }
 
 impl CellSource {

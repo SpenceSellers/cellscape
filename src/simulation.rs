@@ -1,4 +1,5 @@
 use rand::{Rng, SeedableRng, rngs::SmallRng};
+use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -8,7 +9,7 @@ mod cell_source;
 pub use cell_source::CellSource;
 
 mod rule_io;
-pub use rule_io::{rule_string_from_lookup, rule_id_from_lookup, parse_rule_id, rule_lookup_from_string};
+pub use rule_io::{rule_string_from_lookup, rule_id_from_lookup, parse_rule_id};
 
 pub struct Looped<'a> {
     slice: &'a [u8],
@@ -35,7 +36,7 @@ pub fn all_states(num_states: usize) -> Vec<u8> {
     (0..num_states).map(|i| i as u8).collect()
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Rule {
     pub lookup: Vec<CellSource>,
     pub half_width: usize,

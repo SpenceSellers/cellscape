@@ -7,7 +7,7 @@ use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, 
 use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_editor::{self, RandomEditor};
 use crate::rule_meta::{draw_rule_meta_params, max_num_states};
-use crate::simulation::{SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule, SimParameters};
+use crate::simulation::{Rule, SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule, SimParameters};
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::BATCH_SIZE;
 
