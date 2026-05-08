@@ -583,7 +583,11 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
         MixingMode::Checkerboard { mut square_size } => {
             ui.horizontal(|ui| {
                 ui.label("Square size:");
-                let resp = ui.add(egui::Slider::new(&mut square_size, 1u32..=200).suffix(" cells").integer());
+                let resp = ui.add(egui::DragValue::new(&mut square_size).suffix(" cells").range(1u32..=u32::MAX));
+                if resp.changed() {
+                    // Write back every frame so DragValue's delta accumulates correctly
+                    app.setup.mode = MixingMode::Checkerboard { square_size };
+                }
                 if resp.drag_stopped() || resp.lost_focus() {
                     new_mode = Some(MixingMode::Checkerboard { square_size });
                 }
