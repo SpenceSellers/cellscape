@@ -10,6 +10,7 @@ pub enum Screen {
     Main,
     Glance,
     Adjacent,
+    SavedRules,
 }
 
 pub enum GlanceAction {
@@ -75,6 +76,23 @@ impl GalleryState {
         }
     }
 
+    pub fn new_saved() -> Self {
+        GalleryState {
+            entries: Vec::new(),
+            sim_size: 80,
+            prerun_size: 80,
+            render_scale: 2,
+            cols: 8,
+            title: "Saved Rules",
+            allow_reroll: false,
+            num_states: 2,
+            half_width: 3,
+            noise: 0.0,
+            selected_palette: ColorPalette::Classic,
+            palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
+        }
+    }
+
     pub fn set_num_states(&mut self, num_states: usize) {
         self.num_states = num_states;
     }
@@ -122,6 +140,15 @@ pub fn enter_adjacent_view(state: &mut GalleryState, base: &SimParameters) {
         );
         let pixels = compute_sim(&params, size, size, state.prerun_size);
         state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false });
+    }
+}
+
+pub fn enter_saved_rules_view(state: &mut GalleryState, saved: &[SimParameters]) {
+    let size = state.sim_size * state.render_scale as usize;
+    state.entries.clear();
+    for params in saved {
+        let pixels = compute_sim(params, size, size, state.prerun_size);
+        state.entries.push(GlanceEntry { params: params.clone(), pixels, texture: None, dirty: false });
     }
 }
 

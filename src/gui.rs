@@ -3,7 +3,7 @@ use rand::Rng;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
 
-use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, draw_gallery};
+use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, enter_adjacent_view, enter_saved_rules_view, draw_gallery};
 use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_editor::{self, RandomEditor};
 use crate::rule_meta::{draw_rule_meta_params, max_num_states};
@@ -64,6 +64,8 @@ pub struct CellularApp {
     pub current_screen: Screen,
     pub glance_state: GalleryState,
     pub adjacent_state: GalleryState,
+    pub saved_rules: Vec<SimParameters>,
+    pub saved_rules_state: GalleryState,
     pub random_editor: Option<RandomEditor>,
 }
 
@@ -122,6 +124,8 @@ impl CellularApp {
             current_screen: Screen::Main,
             glance_state: GalleryState::new_glance(),
             adjacent_state: GalleryState::new_adjacent(),
+            saved_rules: Vec::new(),
+            saved_rules_state: GalleryState::new_saved(),
             random_editor: None,
         }
     }
@@ -266,6 +270,7 @@ impl eframe::App for CellularApp {
             let action = match self.current_screen {
                 Screen::Glance => draw_gallery(&mut self.glance_state, ctx),
                 Screen::Adjacent => draw_gallery(&mut self.adjacent_state, ctx),
+                Screen::SavedRules => draw_gallery(&mut self.saved_rules_state, ctx),
                 Screen::Main => unreachable!(),
             };
             match action {
@@ -376,6 +381,19 @@ impl eframe::App for CellularApp {
                     });
 
                     ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Save Rule").clicked() {
+                            self.saved_rules.push(self.params.clone());
+                        }
+                        if ui.button(format!("Saved Rules ({})", self.saved_rules.len())).clicked()
+                            && !self.saved_rules.is_empty()
+                        {
+                            self.saved_rules_state.selected_palette = self.selected_palette;
+                            self.saved_rules_state.set_palette(self.state_palette.clone());
+                            enter_saved_rules_view(&mut self.saved_rules_state, &self.saved_rules);
+                            self.current_screen = Screen::SavedRules;
+                        }
+                    });
                     if ui.button("Explore random rules").clicked() {
                         self.glance_state.set_num_states(self.params.rule.num_states);
                         self.glance_state.selected_palette = self.selected_palette;
