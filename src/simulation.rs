@@ -81,7 +81,14 @@ pub enum MixingMode {
     #[serde(rename = "H")]
     HorizontalDivide { #[serde(rename = "f")] fraction: f32 },
     #[serde(rename = "A")]
-    Alternating { #[serde(rename = "h")] stripe_height: u32 },
+    Alternating {
+        #[serde(rename = "h")] stripe_height: u32,
+        #[serde(rename = "v", default)] vertical: bool,
+    },
+    #[serde(rename = "CB")]
+    Checkerboard { #[serde(rename = "s")] square_size: u32 },
+    #[serde(rename = "C")]
+    Circle { #[serde(rename = "r")] radius_pct: f32 },
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -134,8 +141,20 @@ fn rule_index_for(setup: &SimSetup, col: usize, row: usize, w: usize, h: usize) 
             if col < (w as f32 * fraction) as usize { 0 } else { 1 },
         MixingMode::HorizontalDivide { fraction } =>
             if row < (h as f32 * fraction) as usize { 0 } else { 1 },
-        MixingMode::Alternating { stripe_height } =>
-            (row / stripe_height.max(1) as usize) % 2,
+        MixingMode::Alternating { stripe_height, vertical } => {
+            let sq = stripe_height.max(1) as usize;
+            if vertical { (col / sq) % 2 } else { (row / sq) % 2 }
+        }
+        MixingMode::Checkerboard { square_size } => {
+            let sq = square_size.max(1) as usize;
+            (col / sq + row / sq) % 2
+        }
+        MixingMode::Circle { radius_pct } => {
+            let dx = col as f32 - w as f32 / 2.0;
+            let dy = row as f32 - h as f32 / 2.0;
+            let r = radius_pct * w.min(h) as f32 / 2.0;
+            if dx * dx + dy * dy <= r * r { 1 } else { 0 }
+        }
     }
 }
 

@@ -483,6 +483,8 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
         let is_vert = matches!(app.setup.mode, MixingMode::VerticalDivide { .. });
         let is_horiz = matches!(app.setup.mode, MixingMode::HorizontalDivide { .. });
         let is_alt = matches!(app.setup.mode, MixingMode::Alternating { .. });
+        let is_checkerboard = matches!(app.setup.mode, MixingMode::Checkerboard { .. });
+        let is_circle = matches!(app.setup.mode, MixingMode::Circle { .. });
 
         if ui.selectable_label(is_single, "Single").clicked() && !is_single {
             app.setup.mode = MixingMode::Single;
@@ -517,7 +519,27 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
                 let copy = app.setup.rules[0].clone();
                 app.setup.rules.push(copy);
             }
-            app.setup.mode = MixingMode::Alternating { stripe_height: 20 };
+            app.setup.mode = MixingMode::Alternating { stripe_height: 20, vertical: false };
+            app.sync_texts();
+            app.clear_highlight();
+            app.restart_same_rule();
+        }
+        if ui.selectable_label(is_checkerboard, "Checkerboard").clicked() && !is_checkerboard {
+            if app.setup.rules.len() < 2 {
+                let copy = app.setup.rules[0].clone();
+                app.setup.rules.push(copy);
+            }
+            app.setup.mode = MixingMode::Checkerboard { square_size: 20 };
+            app.sync_texts();
+            app.clear_highlight();
+            app.restart_same_rule();
+        }
+        if ui.selectable_label(is_circle, "Circle").clicked() && !is_circle {
+            if app.setup.rules.len() < 2 {
+                let copy = app.setup.rules[0].clone();
+                app.setup.rules.push(copy);
+            }
+            app.setup.mode = MixingMode::Circle { radius_pct: 0.5 };
             app.sync_texts();
             app.clear_highlight();
             app.restart_same_rule();
@@ -546,12 +568,33 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
                 }
             });
         }
-        MixingMode::Alternating { mut stripe_height } => {
+        MixingMode::Alternating { mut stripe_height, mut vertical } => {
             ui.horizontal(|ui| {
-                ui.label("Stripe height:");
+                ui.label("Stripe size:");
                 let resp = ui.add(egui::Slider::new(&mut stripe_height, 1u32..=200).suffix(" rows").integer());
                 if resp.drag_stopped() || resp.lost_focus() {
-                    new_mode = Some(MixingMode::Alternating { stripe_height });
+                    new_mode = Some(MixingMode::Alternating { stripe_height, vertical });
+                }
+            });
+            if ui.checkbox(&mut vertical, "Vertical").changed() {
+                new_mode = Some(MixingMode::Alternating { stripe_height, vertical });
+            }
+        }
+        MixingMode::Checkerboard { mut square_size } => {
+            ui.horizontal(|ui| {
+                ui.label("Square size:");
+                let resp = ui.add(egui::Slider::new(&mut square_size, 1u32..=200).suffix(" cells").integer());
+                if resp.drag_stopped() || resp.lost_focus() {
+                    new_mode = Some(MixingMode::Checkerboard { square_size });
+                }
+            });
+        }
+        MixingMode::Circle { mut radius_pct } => {
+            ui.horizontal(|ui| {
+                ui.label("Radius:");
+                let resp = ui.add(egui::Slider::new(&mut radius_pct, 0.0f32..=1.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)));
+                if resp.drag_stopped() || resp.lost_focus() {
+                    new_mode = Some(MixingMode::Circle { radius_pct });
                 }
             });
         }
