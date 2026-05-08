@@ -9,7 +9,8 @@ mod cell_source;
 pub use cell_source::CellSource;
 
 mod rule_io;
-pub use rule_io::{rule_string_from_lookup, rule_id_from_lookup, parse_rule_id, params_to_json, parse_params_json};
+pub use rule_io::{rule_string_from_lookup, rule_id_from_lookup, parse_rule_id,
+                  params_to_json, parse_params_json, setup_to_json, parse_setup_json};
 
 pub struct Looped<'a> {
     slice: &'a [u8],
@@ -57,7 +58,9 @@ impl Rule {
         let hw = self.half_width as isize;
         let mut state = 0usize;
         for di in -hw..=hw {
-            state = state * self.num_states + arena.get(i_isize + di) as usize;
+            // Modulo fold keeps neighbor values in-range even when adjacent cells come from a
+            // different rule's state space (e.g., k=3 neighbor read by a k=2 rule).
+            state = state * self.num_states + (arena.get(i_isize + di) as usize % self.num_states);
         }
         self.lookup[state].get(rng)
     }
@@ -68,6 +71,38 @@ pub struct SimParameters {
     pub rule: Rule,
     pub noise: f64,
     pub seed: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub enum MixingMode {
+    Single,
+    #[serde(rename = "V")]
+    VerticalDivide { #[serde(rename = "f")] fraction: f32 },
+    #[serde(rename = "H")]
+    HorizontalDivide { #[serde(rename = "f")] fraction: f32 },
+    #[serde(rename = "A")]
+    Alternating { #[serde(rename = "h")] stripe_height: u32 },
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SimSetup {
+    #[serde(rename = "m")]
+    pub mode: MixingMode,
+    #[serde(rename = "r")]
+    pub rules: Vec<SimParameters>,
+}
+
+impl SimSetup {
+    pub fn single(params: SimParameters) -> Self {
+        SimSetup { mode: MixingMode::Single, rules: vec![params] }
+    }
+
+    pub fn primary(&self) -> &SimParameters { &self.rules[0] }
+    pub fn primary_mut(&mut self) -> &mut SimParameters { &mut self.rules[0] }
+
+    pub fn max_num_states(&self) -> usize {
+        self.rules.iter().map(|r| r.rule.num_states).max().unwrap_or(2)
+    }
 }
 
 pub fn apply_step(arena: &[u8], rule: &Rule, out: &mut Vec<u8>, rng: &mut SmallRng) {
@@ -90,6 +125,45 @@ pub fn noise_from_slider(s: f64) -> f64 {
     if s <= 0.0 { 0.0 } else { 10f64.powf(s * 6.0 - 7.0) }
 }
 
+fn rule_index_for(setup: &SimSetup, col: usize, row: usize, w: usize, h: usize) -> usize {
+    let n = setup.rules.len();
+    if n <= 1 { return 0; }
+    match setup.mode {
+        MixingMode::Single => 0,
+        MixingMode::VerticalDivide { fraction } =>
+            if col < (w as f32 * fraction) as usize { 0 } else { 1 },
+        MixingMode::HorizontalDivide { fraction } =>
+            if row < (h as f32 * fraction) as usize { 0 } else { 1 },
+        MixingMode::Alternating { stripe_height } =>
+            (row / stripe_height.max(1) as usize) % 2,
+    }
+}
+
+pub fn cell_rule_index(setup: &SimSetup, col: usize, row: usize, w: usize, h: usize) -> usize {
+    rule_index_for(setup, col, row, w, h)
+}
+
+fn apply_step_multi(arena: &[u8], row_idx: usize, setup: &SimSetup, sim_h: usize, out: &mut Vec<u8>, rng: &mut SmallRng) {
+    let looped = Looped::new(arena);
+    let w = arena.len();
+    out.resize(w, 0);
+    for (i, cell) in out.iter_mut().enumerate() {
+        let ri = rule_index_for(setup, i, row_idx, w, sim_h);
+        *cell = setup.rules[ri].rule.apply(&looped, i, rng);
+    }
+}
+
+fn apply_noise_multi(arena: &mut [u8], row_idx: usize, setup: &SimSetup, sim_h: usize, rng: &mut SmallRng) {
+    let w = arena.len();
+    for i in 0..w {
+        let ri = rule_index_for(setup, i, row_idx, w, sim_h);
+        let r = &setup.rules[ri];
+        if rng.random::<f64>() <= r.noise {
+            arena[i] = rng.random_range(0..r.rule.num_states as u8);
+        }
+    }
+}
+
 pub const BATCH_SIZE: usize = 10;
 
 pub struct SimBatch {
@@ -98,8 +172,7 @@ pub struct SimBatch {
 }
 
 pub struct SimRunner {
-    rule: Rule,
-    noise: f64,
+    setup: SimSetup,
     current: Vec<u8>,
     noise_rng: SmallRng,
     next: Vec<u8>,
@@ -109,18 +182,17 @@ pub struct SimRunner {
 }
 
 impl SimRunner {
-    pub fn new(params: SimParameters, sim_width: usize, sim_height: usize) -> Self {
-        let num_states = params.rule.num_states;
-        let seed = params.seed;
+    pub fn new(setup: SimSetup, sim_width: usize, sim_height: usize) -> Self {
+        let seed = setup.rules[0].seed;
+        let num_states = setup.rules[0].rule.num_states;
         Self {
-            rule: params.rule,
-            noise: params.noise,
             current: build_arena(sim_width, &all_states(num_states), seed),
             noise_rng: SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15),
             next: vec![0u8; sim_width],
             next_output_row: 0,
             sim_width,
             sim_height,
+            setup,
         }
     }
 
@@ -135,8 +207,9 @@ impl SimRunner {
             self.next_output_row = 1;
         }
         while pixels.len() < BATCH_SIZE * self.sim_width && self.next_output_row < self.sim_height {
-            apply_noise(&mut self.current, self.noise, self.rule.num_states, &mut self.noise_rng);
-            apply_step(&self.current, &self.rule, &mut self.next, &mut self.noise_rng);
+            let current_row = self.next_output_row - 1;
+            apply_noise_multi(&mut self.current, current_row, &self.setup, self.sim_height, &mut self.noise_rng);
+            apply_step_multi(&self.current, self.next_output_row, &self.setup, self.sim_height, &mut self.next, &mut self.noise_rng);
             std::mem::swap(&mut self.current, &mut self.next);
             pixels.extend_from_slice(&self.current);
             self.next_output_row += 1;
@@ -147,13 +220,13 @@ impl SimRunner {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn spawn_sim(
-    params: SimParameters,
+    setup: SimSetup,
     sim_width: usize,
     sim_height: usize,
 ) -> mpsc::Receiver<SimBatch> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let mut runner = SimRunner::new(params, sim_width, sim_height);
+        let mut runner = SimRunner::new(setup, sim_width, sim_height);
         let t0 = std::time::Instant::now();
         loop {
             match runner.step_batch() {
@@ -173,8 +246,8 @@ pub struct WasmSimRunner {
 
 #[cfg(target_arch = "wasm32")]
 impl WasmSimRunner {
-    pub fn new(params: SimParameters, sim_width: usize, sim_height: usize) -> Self {
-        Self { runner: SimRunner::new(params, sim_width, sim_height) }
+    pub fn new(setup: SimSetup, sim_width: usize, sim_height: usize) -> Self {
+        Self { runner: SimRunner::new(setup, sim_width, sim_height) }
     }
 
     pub fn step_batch(&mut self) -> Option<SimBatch> {
@@ -196,7 +269,7 @@ pub fn compute_sim(
     result.extend_from_slice(&current);
     for i in 1..(sim_height + prerun) {
         apply_noise(&mut current, params.noise, rule.num_states, &mut noise_rng);
-        apply_step(&current, &rule, &mut next, &mut noise_rng);
+        apply_step(&current, rule, &mut next, &mut noise_rng);
         std::mem::swap(&mut current, &mut next);
         if i > prerun {
             result.extend_from_slice(&current);

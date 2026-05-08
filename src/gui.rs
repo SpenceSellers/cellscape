@@ -7,7 +7,11 @@ use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, 
 use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_editor::{self, RandomEditor};
 use crate::rule_meta::{draw_rule_meta_params, max_num_states};
-use crate::simulation::{SimBatch, noise_from_slider, parse_seed, params_to_json, parse_params_json, random_rule, SimParameters};
+use crate::simulation::{
+    SimBatch, MixingMode, SimSetup, SimParameters,
+    noise_from_slider, parse_seed, params_to_json, parse_params_json,
+    setup_to_json, parse_setup_json, random_rule, cell_rule_index,
+};
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::BATCH_SIZE;
 
@@ -17,24 +21,22 @@ use crate::simulation::spawn_sim;
 use crate::simulation::WasmSimRunner;
 
 #[cfg(target_arch = "wasm32")]
-fn read_url_hash() -> Option<SimParameters> {
+fn read_url_hash() -> Option<SimSetup> {
     let hash = web_sys::window()?.location().hash().ok()?;
     let id = hash.trim_start_matches('#');
-    parse_params_json(id)
+    parse_setup_json(id)
 }
 
 #[cfg(target_arch = "wasm32")]
-fn write_url_hash(rule_id: &str) {
+fn write_url_hash(s: &str) {
     if let Some(win) = web_sys::window() {
-        let _ = win.location().set_hash(rule_id);
+        let _ = win.location().set_hash(s);
     }
 }
 
 fn wrapping_idx(i: isize, m: usize) -> usize {
     ((i % m as isize + m as isize) % m as isize) as usize
 }
-
-
 
 pub struct CellularApp {
     #[cfg(not(target_arch = "wasm32"))]
@@ -47,8 +49,11 @@ pub struct CellularApp {
     pub sim_width: usize,
     pub sim_height: usize,
     pub sim_size: usize,
-    pub rule_text: String,
-    pub params: SimParameters,
+
+    pub setup: SimSetup,
+    pub setup_text: String,
+    pub slot_texts: Vec<String>,
+
     pub state_palette: Vec<egui::Color32>,
     pub selected_palette: ColorPalette,
     pub show_rule_editor: bool,
@@ -57,8 +62,10 @@ pub struct CellularApp {
     pub pan: egui::Vec2,
     pub view_initialized: bool,
     pub cells_data: Vec<u8>,
-    pub highlighted_state: Option<usize>,
+    pub highlighted_state: Option<(usize, usize)>,
     pub highlighted_cell: Option<(usize, usize)>,
+    pub editor_active_rule: usize,
+
     #[cfg(not(target_arch = "wasm32"))]
     pub saved_at: Option<std::time::Instant>,
     pub current_screen: Screen,
@@ -67,34 +74,39 @@ pub struct CellularApp {
     pub saved_rules: Vec<SimParameters>,
     pub saved_rules_state: GalleryState,
     pub random_editor: Option<RandomEditor>,
+
+    // Which slot "Load from Saved" was triggered from (None = replace whole setup)
+    pub saved_rules_slot: Option<usize>,
 }
 
 impl CellularApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, sim_width: usize, sim_height: usize, initial_rule: Option<&str>) -> Self {
-        let mut params = SimParameters {
+        let default_params = SimParameters {
             rule: random_rule(2, 3, &mut rand::rng()),
             noise: noise_from_slider(0.5),
             seed: rand::rng().random::<u64>(),
         };
+        let mut setup = SimSetup::single(default_params);
 
-        if let Some(parsed) = initial_rule.and_then(|s| parse_params_json(s)) {
-            params = parsed;
+        if let Some(parsed) = initial_rule.and_then(|s| parse_setup_json(s)) {
+            setup = parsed;
         }
 
         #[cfg(target_arch = "wasm32")]
-        if let Some(hash_params) = read_url_hash() {
-            params = hash_params;
+        if let Some(hash_setup) = read_url_hash() {
+            setup = hash_setup;
         }
 
-        let rule_text = params_to_json(&params);
+        let setup_text = setup_to_json(&setup);
+        let slot_texts: Vec<String> = setup.rules.iter().map(params_to_json).collect();
 
         #[cfg(not(target_arch = "wasm32"))]
-        let receiver = spawn_sim(params.clone(), sim_width, sim_height);
-
+        let receiver = spawn_sim(setup.clone(), sim_width, sim_height);
         #[cfg(target_arch = "wasm32")]
-        let wasm_runner = Some(WasmSimRunner::new(params.clone(), sim_width, sim_height));
+        let wasm_runner = Some(WasmSimRunner::new(setup.clone(), sim_width, sim_height));
 
-        let state_palette = build_palette(ColorPalette::Classic, params.rule.num_states);
+        let max_k = setup.max_num_states();
+        let state_palette = build_palette(ColorPalette::Classic, max_k);
 
         CellularApp {
             #[cfg(not(target_arch = "wasm32"))]
@@ -107,9 +119,12 @@ impl CellularApp {
             sim_size: sim_width,
             sim_width,
             sim_height,
-            rule_text,
-            seed_text: params.seed.to_string(),
-            params,
+
+            seed_text: setup.rules[0].seed.to_string(),
+            setup_text,
+            slot_texts,
+            setup,
+
             state_palette,
             selected_palette: ColorPalette::Classic,
             show_rule_editor: false,
@@ -119,6 +134,8 @@ impl CellularApp {
             cells_data: vec![0u8; sim_width * sim_height],
             highlighted_state: None,
             highlighted_cell: None,
+            editor_active_rule: 0,
+
             #[cfg(not(target_arch = "wasm32"))]
             saved_at: None,
             current_screen: Screen::Main,
@@ -127,25 +144,22 @@ impl CellularApp {
             saved_rules: Vec::new(),
             saved_rules_state: GalleryState::new_saved(),
             random_editor: None,
+            saved_rules_slot: None,
         }
     }
 
     fn start_sim(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.receiver = spawn_sim(self.params.clone(), self.sim_width, self.sim_height);
-        }
+        { self.receiver = spawn_sim(self.setup.clone(), self.sim_width, self.sim_height); }
         #[cfg(target_arch = "wasm32")]
-        {
-            self.wasm_runner = Some(WasmSimRunner::new(self.params.clone(), self.sim_width, self.sim_height));
-        }
+        { self.wasm_runner = Some(WasmSimRunner::new(self.setup.clone(), self.sim_width, self.sim_height)); }
         self.rows_done = 0;
     }
 
     pub fn restart_same_rule(&mut self) {
         self.start_sim();
         #[cfg(target_arch = "wasm32")]
-        write_url_hash(&self.rule_text);
+        write_url_hash(&self.setup_text);
     }
 
     pub fn resize_and_restart(&mut self, size: usize) {
@@ -158,24 +172,31 @@ impl CellularApp {
         self.start_sim();
     }
 
-    pub fn new_rule(&mut self) {
-        self.params.rule = random_rule(self.params.rule.num_states, self.params.rule.half_width, &mut rand::rng());
-        self.rule_text = params_to_json(&self.params);
+    pub fn new_rule_for_slot(&mut self, slot: usize) {
+        let k = self.setup.rules[slot].rule.num_states;
+        let hw = self.setup.rules[slot].rule.half_width;
+        self.setup.rules[slot].rule = random_rule(k, hw, &mut rand::rng());
+        self.sync_texts();
         self.clear_highlight();
         self.restart_same_rule();
     }
 
-    pub fn change_num_states(&mut self, new_k: usize) {
-        self.state_palette = build_palette(self.selected_palette, new_k);
-        self.params.rule = random_rule(new_k, self.params.rule.half_width, &mut rand::rng());
-        self.rule_text = params_to_json(&self.params);
+    pub fn change_num_states_for_slot(&mut self, slot: usize, new_k: usize) {
+        let clamped = new_k.min(max_num_states(self.setup.rules[slot].rule.half_width));
+        self.setup.rules[slot].rule = random_rule(clamped, self.setup.rules[slot].rule.half_width, &mut rand::rng());
+        self.state_palette = build_palette(self.selected_palette, self.setup.max_num_states());
+        self.sync_texts();
         self.clear_highlight();
         self.restart_same_rule();
     }
 
-    pub fn change_half_width(&mut self, new_hw: usize) {
-        self.params.rule = random_rule(self.params.rule.num_states, new_hw, &mut rand::rng());
-        self.rule_text = params_to_json(&self.params);
+    pub fn change_half_width_for_slot(&mut self, slot: usize, new_hw: usize) {
+        let k = self.setup.rules[slot].rule.num_states;
+        if k > max_num_states(new_hw) {
+            self.state_palette = build_palette(self.selected_palette, self.setup.max_num_states());
+        }
+        self.setup.rules[slot].rule = random_rule(k, new_hw, &mut rand::rng());
+        self.sync_texts();
         self.clear_highlight();
         self.restart_same_rule();
     }
@@ -185,11 +206,23 @@ impl CellularApp {
         self.highlighted_cell = None;
     }
 
+    pub fn sync_texts(&mut self) {
+        self.setup_text = setup_to_json(&self.setup);
+        self.slot_texts.clear();
+        for r in &self.setup.rules {
+            self.slot_texts.push(params_to_json(r));
+        }
+    }
+
+    pub fn sync_slot_texts(&mut self) {
+        self.sync_texts();
+    }
+
     fn rebuild_texture(&mut self, ctx: &egui::Context) {
         if self.rows_done == 0 { return; }
         let pixels: Vec<egui::Color32> = self.cells_data[..self.rows_done * self.sim_width]
             .iter()
-            .map(|&v| self.state_palette[v as usize])
+            .map(|&v| self.state_palette[v as usize % self.state_palette.len()])
             .collect();
         let image = egui::ColorImage { size: [self.sim_width, self.rows_done], pixels };
         match &mut self.texture {
@@ -210,12 +243,13 @@ impl CellularApp {
         use std::fs;
         fs::create_dir_all("output").ok();
         let ts = Local::now().format("%Y-%m-%dT%H-%M-%S");
-        let rule_prefix: String = self.rule_text.chars().take(16).collect();
-        let path = format!("output/{}-{}_k{}.png", ts, rule_prefix, self.params.rule.num_states);
+        let prefix: String = self.setup_text.chars().take(16).collect();
+        let max_k = self.setup.max_num_states();
+        let path = format!("output/{}-{}_k{}.png", ts, prefix, max_k);
         let w = self.sim_width as u32;
         let h = self.sim_height as u32;
         let pixels: Vec<u8> = self.cells_data.iter().flat_map(|&v| {
-            let c = self.state_palette[v as usize];
+            let c = self.state_palette[v as usize % self.state_palette.len()];
             [c.r(), c.g(), c.b()]
         }).collect();
         if let Some(img) = RgbImage::from_raw(w, h, pixels) {
@@ -231,21 +265,14 @@ impl CellularApp {
             let col = i % self.sim_width;
             self.cells_data[row * self.sim_width + col] = v;
         }
-        let pixels: Vec<egui::Color32> = batch
-            .pixels
-            .iter()
-            .map(|&v| self.state_palette[v as usize])
+        let pixels: Vec<egui::Color32> = batch.pixels.iter()
+            .map(|&v| self.state_palette[v as usize % self.state_palette.len()])
             .collect();
         let partial = egui::ColorImage { size: [self.sim_width, count], pixels };
         match &mut self.texture {
-            Some(tex) => {
-                tex.set_partial([0, batch.start], partial, tex_options());
-            }
+            Some(tex) => { tex.set_partial([0, batch.start], partial, tex_options()); }
             None => {
-                let black = egui::ColorImage::new(
-                    [self.sim_width, self.sim_height],
-                    egui::Color32::BLACK,
-                );
+                let black = egui::ColorImage::new([self.sim_width, self.sim_height], egui::Color32::BLACK);
                 let mut tex = ctx.load_texture("sim", black, tex_options());
                 tex.set_partial([0, batch.start], partial, tex_options());
                 self.texture = Some(tex);
@@ -275,28 +302,36 @@ impl eframe::App for CellularApp {
             };
             match action {
                 GlanceAction::SelectRule(params) => {
-                    self.state_palette = build_palette(self.selected_palette, params.rule.num_states);
-                    self.params = params;
-                    self.rule_text = params_to_json(&self.params);
-                    self.seed_text = self.params.seed.to_string();
+                    if let Some(slot) = self.saved_rules_slot {
+                        // Load into a specific slot
+                        self.setup.rules[slot] = params;
+                        self.state_palette = build_palette(self.selected_palette, self.setup.max_num_states());
+                    } else {
+                        // Replace entire setup
+                        self.state_palette = build_palette(self.selected_palette, params.rule.num_states);
+                        self.seed_text = params.seed.to_string();
+                        self.setup = SimSetup::single(params);
+                        self.editor_active_rule = 0;
+                    }
+                    self.sync_texts();
                     self.clear_highlight();
                     self.restart_same_rule();
                     self.current_screen = Screen::Main;
+                    self.saved_rules_slot = None;
                 }
                 GlanceAction::Back => {
                     self.current_screen = Screen::Main;
+                    self.saved_rules_slot = None;
                 }
                 GlanceAction::None => {}
             }
             return;
         }
 
-
         if ctx.input(|i| i.key_pressed(egui::Key::N)) {
-            self.new_rule();
+            self.new_rule_for_slot(self.editor_active_rule);
         }
 
-        // Poll simulation results (native: drain mpsc channel; wasm: step runner)
         #[cfg(not(target_arch = "wasm32"))]
         while let Ok(batch) = self.receiver.try_recv() {
             self.process_batch(ctx, batch);
@@ -325,124 +360,8 @@ impl eframe::App for CellularApp {
             .resizable(true)
             .default_width(260.0)
             .show(ctx, |ui| {
-                ui.vertical(|ui| {
-                    let mut num_states = self.params.rule.num_states;
-                    let mut half_width = self.params.rule.half_width;
-                    let mut noise = self.params.noise;
-                    let meta_resp = draw_rule_meta_params(ui, &mut num_states, &mut half_width, &mut noise, true);
-                    if meta_resp.num_states_changed {
-                        self.change_num_states(num_states.min(max_num_states(self.params.rule.half_width)));
-                    }
-                    if meta_resp.half_width_changed {
-                        if self.params.rule.num_states > max_num_states(half_width) {
-                            self.state_palette = build_palette(self.selected_palette, max_num_states(half_width));
-                        }
-                        self.change_half_width(half_width);
-                    }
-                    if meta_resp.noise_changed {
-                        self.params.noise = noise;
-                        self.restart_same_rule();
-                    }
-
-                    ui.horizontal(|ui| {
-                        ui.label("Rule JSON:");
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(&mut self.rule_text).desired_width(220.0),
-                        );
-                        if resp.lost_focus() {
-                            if let Some(parsed) = parse_params_json(&self.rule_text) {
-                                self.state_palette = build_palette(self.selected_palette, parsed.rule.num_states);
-                                self.params = parsed;
-                                self.seed_text = self.params.seed.to_string();
-                                self.rule_text = params_to_json(&self.params);
-                                self.clear_highlight();
-                                self.restart_same_rule();
-                            } else {
-                                self.rule_text = params_to_json(&self.params);
-                            }
-                        }
-                    });
-                    ui.label(format!("{}/{} rows   zoom: {:.2}x", self.rows_done, self.sim_height, self.zoom));
-
-                    ui.separator();
-
-                    #[cfg(not(target_arch = "wasm32"))]
-                    ui.horizontal(|ui| {
-                        if ui.button("Save PNG").clicked() {
-                            self.save_image();
-                        }
-                        if let Some(t) = self.saved_at {
-                            if t.elapsed() < std::time::Duration::from_secs(2) {
-                                ui.label("Saved!");
-                            } else {
-                                self.saved_at = None;
-                            }
-                        }
-                    });
-
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        if ui.button("Save Rule").clicked() {
-                            self.saved_rules.push(self.params.clone());
-                        }
-                        if ui.button(format!("Saved Rules ({})", self.saved_rules.len())).clicked()
-                            && !self.saved_rules.is_empty()
-                        {
-                            self.saved_rules_state.selected_palette = self.selected_palette;
-                            self.saved_rules_state.set_palette(self.state_palette.clone());
-                            enter_saved_rules_view(&mut self.saved_rules_state, &self.saved_rules);
-                            self.current_screen = Screen::SavedRules;
-                        }
-                    });
-                    if ui.button("Explore random rules").clicked() {
-                        self.glance_state.set_num_states(self.params.rule.num_states);
-                        self.glance_state.selected_palette = self.selected_palette;
-                        self.glance_state.set_palette(self.state_palette.clone());
-                        self.glance_state.noise = self.params.noise;
-                        enter_glance_view(&mut self.glance_state, self.params.rule.num_states, self.params.rule.half_width);
-                        self.current_screen = Screen::Glance;
-                    }
-                    if ui.button("Explore adjacent rules").clicked() {
-                        self.adjacent_state.selected_palette = self.selected_palette;
-                        self.adjacent_state.set_palette(self.state_palette.clone());
-                        enter_adjacent_view(&mut self.adjacent_state, &self.params);
-                        self.current_screen = Screen::Adjacent;
-                    }
-                    ui.separator();
-
-                    let editor_label = if self.show_rule_editor { "Close Editor" } else { "Edit Rule" };
-                    if ui.button(editor_label).clicked() {
-                        self.show_rule_editor = !self.show_rule_editor;
-                        if !self.show_rule_editor {
-                            self.clear_highlight();
-                        }
-                    }
-                    ui.separator();
-                    if draw_palette_params(ui, &mut self.selected_palette, &mut self.state_palette, self.params.rule.num_states) {
-                        self.rebuild_texture(ui.ctx());
-                    }
-
-                    ui.separator();
-                    ui.label("Size:");
-                    let size_resp = ui.add(
-                        egui::Slider::new(&mut self.sim_size, 100..=16000)
-                            .suffix("px")
-                            .integer(),
-                    );
-                    if size_resp.drag_stopped() || size_resp.lost_focus() {
-                        let new_size = self.sim_size;
-                        self.resize_and_restart(new_size);
-                    }
-
-                    ui.separator();
-                    ui.label("Seed:");
-                    let seed_resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.seed_text).desired_width(140.0),
-                    );
-                    if seed_resp.lost_focus() {
-                        self.params.seed = parse_seed(&self.seed_text);
-                        self.restart_same_rule();
-                    }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    draw_sidebar(self, ui);
                 });
             });
 
@@ -481,9 +400,7 @@ impl eframe::App for CellularApp {
 
             let scroll = ctx.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 && response.hovered() {
-                let cursor = ctx
-                    .input(|i| i.pointer.hover_pos())
-                    .unwrap_or(canvas.center());
+                let cursor = ctx.input(|i| i.pointer.hover_pos()).unwrap_or(canvas.center());
                 let cursor_local = cursor.to_vec2() - canvas.min.to_vec2();
                 let factor = (scroll * 0.001).exp();
                 let new_zoom = (self.zoom * factor).clamp(0.001, 50.0);
@@ -497,20 +414,19 @@ impl eframe::App for CellularApp {
                     let local = (pos.to_vec2() - canvas.min.to_vec2() - self.pan) / self.zoom;
                     let col = local.x as usize;
                     let row = local.y as usize;
-                    if col < self.sim_width && row < self.sim_height {
-                        if row > 0 {
-                            let mut state = 0usize;
-                            let hw = self.params.rule.half_width as isize;
-                            for di in -hw..=hw {
-                                let nc = wrapping_idx(col as isize + di, self.sim_width);
-                                let idx = (row - 1) * self.sim_width + nc;
-                                state = state * self.params.rule.num_states + self.cells_data[idx] as usize;
-                            }
-                            self.highlighted_state = Some(state);
-                            self.highlighted_cell = Some((col, row));
-                        } else {
-                            self.clear_highlight();
+                    if col < self.sim_width && row < self.sim_height && row > 0 {
+                        let rule_idx = cell_rule_index(&self.setup, col, row, self.sim_width, self.sim_height);
+                        let rule = &self.setup.rules[rule_idx].rule;
+                        let mut state = 0usize;
+                        let hw = rule.half_width as isize;
+                        for di in -hw..=hw {
+                            let nc = wrapping_idx(col as isize + di, self.sim_width);
+                            let idx = (row - 1) * self.sim_width + nc;
+                            state = state * rule.num_states + (self.cells_data[idx] as usize % rule.num_states);
                         }
+                        self.highlighted_state = Some((rule_idx, state));
+                        self.highlighted_cell = Some((col, row));
+                        self.editor_active_rule = rule_idx;
                     } else {
                         self.clear_highlight();
                     }
@@ -531,7 +447,9 @@ impl eframe::App for CellularApp {
             if let Some((col, row)) = self.highlighted_cell {
                 if row > 0 && col < self.sim_width && row <= self.sim_height {
                     let z = self.zoom;
-                    for di in -(self.params.rule.half_width as isize)..=(self.params.rule.half_width as isize) {
+                    let rule_idx = cell_rule_index(&self.setup, col, row, self.sim_width, self.sim_height);
+                    let hw = self.setup.rules[rule_idx].rule.half_width;
+                    for di in -(hw as isize)..=(hw as isize) {
                         let nc = wrapping_idx(col as isize + di, self.sim_width);
                         let nr = row - 1;
                         let cell_rect = egui::Rect::from_min_size(
@@ -539,20 +457,14 @@ impl eframe::App for CellularApp {
                             egui::vec2(z, z),
                         );
                         painter.rect_filled(cell_rect, 1.0, egui::Color32::from_rgba_premultiplied(60, 160, 255, 60));
-                        painter.rect_stroke(
-                            cell_rect, 1.0,
-                            egui::Stroke::new(1.5, egui::Color32::from_rgb(60, 160, 255)),
-                        );
+                        painter.rect_stroke(cell_rect, 1.0, egui::Stroke::new(1.5, egui::Color32::from_rgb(60, 160, 255)));
                     }
                     let cell_rect = egui::Rect::from_min_size(
                         egui::pos2(origin.x + col as f32 * z, origin.y + row as f32 * z),
                         egui::vec2(z, z),
                     );
                     painter.rect_filled(cell_rect, 1.0, egui::Color32::from_rgba_premultiplied(255, 200, 50, 80));
-                    painter.rect_stroke(
-                        cell_rect, 1.0,
-                        egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 200, 50)),
-                    );
+                    painter.rect_stroke(cell_rect, 1.0, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 200, 50)));
                 }
             }
         });
@@ -560,5 +472,335 @@ impl eframe::App for CellularApp {
         if self.rows_done < self.sim_height {
             ctx.request_repaint();
         }
+    }
+}
+
+fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
+    // ── Mixing mode ──
+    ui.label("Mixing Mode:");
+    ui.horizontal_wrapped(|ui| {
+        let is_single = matches!(app.setup.mode, MixingMode::Single);
+        let is_vert = matches!(app.setup.mode, MixingMode::VerticalDivide { .. });
+        let is_horiz = matches!(app.setup.mode, MixingMode::HorizontalDivide { .. });
+        let is_alt = matches!(app.setup.mode, MixingMode::Alternating { .. });
+
+        if ui.selectable_label(is_single, "Single").clicked() && !is_single {
+            app.setup.mode = MixingMode::Single;
+            app.setup.rules.truncate(1);
+            app.editor_active_rule = 0;
+            app.sync_texts();
+            app.clear_highlight();
+            app.restart_same_rule();
+        }
+        if ui.selectable_label(is_vert, "Vertical").clicked() && !is_vert {
+            if app.setup.rules.len() < 2 {
+                let copy = app.setup.rules[0].clone();
+                app.setup.rules.push(copy);
+            }
+            app.setup.mode = MixingMode::VerticalDivide { fraction: 0.5 };
+            app.sync_texts();
+            app.clear_highlight();
+            app.restart_same_rule();
+        }
+        if ui.selectable_label(is_horiz, "Horizontal").clicked() && !is_horiz {
+            if app.setup.rules.len() < 2 {
+                let copy = app.setup.rules[0].clone();
+                app.setup.rules.push(copy);
+            }
+            app.setup.mode = MixingMode::HorizontalDivide { fraction: 0.5 };
+            app.sync_texts();
+            app.clear_highlight();
+            app.restart_same_rule();
+        }
+        if ui.selectable_label(is_alt, "Alternating").clicked() && !is_alt {
+            if app.setup.rules.len() < 2 {
+                let copy = app.setup.rules[0].clone();
+                app.setup.rules.push(copy);
+            }
+            app.setup.mode = MixingMode::Alternating { stripe_height: 20 };
+            app.sync_texts();
+            app.clear_highlight();
+            app.restart_same_rule();
+        }
+    });
+
+    // Mode-specific slider — clone to avoid holding a borrow on app while calling sync/restart
+    let mode_snapshot = app.setup.mode.clone();
+    let mut new_mode: Option<MixingMode> = None;
+    match mode_snapshot {
+        MixingMode::VerticalDivide { mut fraction } => {
+            ui.horizontal(|ui| {
+                ui.label("Left fraction:");
+                let resp = ui.add(egui::Slider::new(&mut fraction, 0.0f32..=1.0).fixed_decimals(2));
+                if resp.drag_stopped() || resp.lost_focus() {
+                    new_mode = Some(MixingMode::VerticalDivide { fraction });
+                }
+            });
+        }
+        MixingMode::HorizontalDivide { mut fraction } => {
+            ui.horizontal(|ui| {
+                ui.label("Top fraction:");
+                let resp = ui.add(egui::Slider::new(&mut fraction, 0.0f32..=1.0).fixed_decimals(2));
+                if resp.drag_stopped() || resp.lost_focus() {
+                    new_mode = Some(MixingMode::HorizontalDivide { fraction });
+                }
+            });
+        }
+        MixingMode::Alternating { mut stripe_height } => {
+            ui.horizontal(|ui| {
+                ui.label("Stripe height:");
+                let resp = ui.add(egui::Slider::new(&mut stripe_height, 1u32..=200).suffix(" rows").integer());
+                if resp.drag_stopped() || resp.lost_focus() {
+                    new_mode = Some(MixingMode::Alternating { stripe_height });
+                }
+            });
+        }
+        MixingMode::Single => {}
+    }
+    if let Some(mode) = new_mode {
+        app.setup.mode = mode;
+        app.sync_texts();
+        app.restart_same_rule();
+    }
+
+    ui.separator();
+
+    // ── Per-rule sections ──
+    let num_rule_slots = app.setup.rules.len();
+    let multi = num_rule_slots > 1;
+
+    // Collect changes to apply after the loop (to avoid borrow conflicts)
+    struct SlotChange {
+        slot: usize,
+        kind: SlotChangeKind,
+    }
+    enum SlotChangeKind {
+        NumStates(usize),
+        HalfWidth(usize),
+        Noise(f64),
+        NewRandom,
+        LoadFromSaved,
+        SaveRule,
+        EditThis,
+        ParseJson(String),
+    }
+
+    let mut pending: Option<SlotChange> = None;
+
+    for slot in 0..num_rule_slots {
+        if slot >= app.slot_texts.len() {
+            app.slot_texts.push(params_to_json(&app.setup.rules[slot]));
+        }
+
+        let label = if multi {
+            if slot == 0 { "Rule A".to_string() } else { format!("Rule {}", (b'A' + slot as u8) as char) }
+        } else {
+            String::new()
+        };
+
+        let draw_slot_contents = |ui: &mut egui::Ui, app: &mut CellularApp, pending: &mut Option<SlotChange>| {
+            let mut num_states = app.setup.rules[slot].rule.num_states;
+            let mut half_width = app.setup.rules[slot].rule.half_width;
+            let mut noise = app.setup.rules[slot].noise;
+
+            let meta_resp = draw_rule_meta_params(ui, &mut num_states, &mut half_width, &mut noise, true);
+            if meta_resp.num_states_changed && pending.is_none() {
+                *pending = Some(SlotChange { slot, kind: SlotChangeKind::NumStates(num_states) });
+            }
+            if meta_resp.half_width_changed && pending.is_none() {
+                *pending = Some(SlotChange { slot, kind: SlotChangeKind::HalfWidth(half_width) });
+            }
+            if meta_resp.noise_changed && pending.is_none() {
+                *pending = Some(SlotChange { slot, kind: SlotChangeKind::Noise(noise) });
+            }
+
+            ui.horizontal(|ui| {
+                ui.label("Rule JSON:");
+                let text = &mut app.slot_texts[slot];
+                let resp = ui.add(egui::TextEdit::singleline(text).desired_width(180.0));
+                if resp.lost_focus() && pending.is_none() {
+                    let captured = text.clone();
+                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::ParseJson(captured) });
+                }
+            });
+
+            ui.horizontal(|ui| {
+                if ui.button("Save Rule").clicked() && pending.is_none() {
+                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::SaveRule });
+                }
+                if ui.button("Load from Saved…").clicked() && pending.is_none() {
+                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::LoadFromSaved });
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui.button("New random").clicked() && pending.is_none() {
+                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::NewRandom });
+                }
+                let edit_label = if app.editor_active_rule == slot && app.show_rule_editor {
+                    "Editing ✓"
+                } else {
+                    "Edit this rule"
+                };
+                if ui.button(edit_label).clicked() && pending.is_none() {
+                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::EditThis });
+                }
+            });
+        };
+
+        if multi {
+            egui::CollapsingHeader::new(&label)
+                .default_open(true)
+                .id_salt(format!("rule_slot_{slot}"))
+                .show(ui, |ui| {
+                    draw_slot_contents(ui, app, &mut pending);
+                });
+        } else {
+            draw_slot_contents(ui, app, &mut pending);
+        }
+    }
+
+    // Apply the collected change
+    if let Some(change) = pending {
+        let slot = change.slot;
+        match change.kind {
+            SlotChangeKind::NumStates(k) => app.change_num_states_for_slot(slot, k),
+            SlotChangeKind::HalfWidth(hw) => app.change_half_width_for_slot(slot, hw),
+            SlotChangeKind::Noise(n) => {
+                app.setup.rules[slot].noise = n;
+                app.sync_texts();
+                app.restart_same_rule();
+            }
+            SlotChangeKind::NewRandom => app.new_rule_for_slot(slot),
+            SlotChangeKind::SaveRule => {
+                app.saved_rules.push(app.setup.rules[slot].clone());
+            }
+            SlotChangeKind::LoadFromSaved => {
+                if !app.saved_rules.is_empty() {
+                    app.saved_rules_slot = Some(slot);
+                    app.saved_rules_state.selected_palette = app.selected_palette;
+                    app.saved_rules_state.set_palette(app.state_palette.clone());
+                    enter_saved_rules_view(&mut app.saved_rules_state, &app.saved_rules);
+                    app.current_screen = Screen::SavedRules;
+                }
+            }
+            SlotChangeKind::EditThis => {
+                app.editor_active_rule = slot;
+                app.show_rule_editor = true;
+            }
+            SlotChangeKind::ParseJson(text) => {
+                if let Some(parsed) = parse_params_json(&text) {
+                    app.setup.rules[slot] = parsed;
+                    app.state_palette = build_palette(app.selected_palette, app.setup.max_num_states());
+                    app.sync_texts();
+                    app.clear_highlight();
+                    app.restart_same_rule();
+                } else {
+                    // Revert text
+                    app.slot_texts[slot] = params_to_json(&app.setup.rules[slot]);
+                }
+            }
+        }
+    }
+
+    ui.separator();
+
+    // ── Setup JSON (global) ──
+    ui.horizontal(|ui| {
+        ui.label("Setup JSON:");
+        let resp = ui.add(egui::TextEdit::singleline(&mut app.setup_text).desired_width(220.0));
+        if resp.lost_focus() {
+            let text = app.setup_text.clone();
+            if let Some(parsed) = parse_setup_json(&text) {
+                app.state_palette = build_palette(app.selected_palette, parsed.max_num_states());
+                app.seed_text = parsed.rules[0].seed.to_string();
+                app.editor_active_rule = app.editor_active_rule.min(parsed.rules.len() - 1);
+                app.setup = parsed;
+                app.sync_texts();
+                app.clear_highlight();
+                app.restart_same_rule();
+            } else {
+                app.setup_text = setup_to_json(&app.setup);
+            }
+        }
+    });
+
+    ui.label(format!("{}/{} rows   zoom: {:.2}x", app.rows_done, app.sim_height, app.zoom));
+
+    ui.separator();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.horizontal(|ui| {
+        if ui.button("Save PNG").clicked() {
+            app.save_image();
+        }
+        if let Some(t) = app.saved_at {
+            if t.elapsed() < std::time::Duration::from_secs(2) {
+                ui.label("Saved!");
+            } else {
+                app.saved_at = None;
+            }
+        }
+    });
+
+    ui.separator();
+    if ui.button(format!("Saved Rules ({})", app.saved_rules.len())).clicked()
+        && !app.saved_rules.is_empty()
+    {
+        app.saved_rules_slot = None;
+        app.saved_rules_state.selected_palette = app.selected_palette;
+        app.saved_rules_state.set_palette(app.state_palette.clone());
+        enter_saved_rules_view(&mut app.saved_rules_state, &app.saved_rules);
+        app.current_screen = Screen::SavedRules;
+    }
+
+    if ui.button("Explore random rules").clicked() {
+        let slot = app.editor_active_rule;
+        app.saved_rules_slot = None;
+        app.glance_state.set_num_states(app.setup.rules[slot].rule.num_states);
+        app.glance_state.selected_palette = app.selected_palette;
+        app.glance_state.set_palette(app.state_palette.clone());
+        app.glance_state.noise = app.setup.rules[slot].noise;
+        enter_glance_view(&mut app.glance_state, app.setup.rules[slot].rule.num_states, app.setup.rules[slot].rule.half_width);
+        app.current_screen = Screen::Glance;
+    }
+    if ui.button("Explore adjacent rules").clicked() {
+        let slot = app.editor_active_rule;
+        app.saved_rules_slot = None;
+        app.adjacent_state.selected_palette = app.selected_palette;
+        app.adjacent_state.set_palette(app.state_palette.clone());
+        enter_adjacent_view(&mut app.adjacent_state, &app.setup.rules[slot]);
+        app.current_screen = Screen::Adjacent;
+    }
+
+    ui.separator();
+
+    let editor_label = if app.show_rule_editor { "Close Editor" } else { "Edit Rule" };
+    if ui.button(editor_label).clicked() {
+        app.show_rule_editor = !app.show_rule_editor;
+        if !app.show_rule_editor {
+            app.clear_highlight();
+        }
+    }
+
+    ui.separator();
+    if draw_palette_params(ui, &mut app.selected_palette, &mut app.state_palette, app.setup.max_num_states()) {
+        app.rebuild_texture(ui.ctx());
+    }
+
+    ui.separator();
+    ui.label("Size:");
+    let size_resp = ui.add(egui::Slider::new(&mut app.sim_size, 100..=16000).suffix("px").integer());
+    if size_resp.drag_stopped() || size_resp.lost_focus() {
+        let new_size = app.sim_size;
+        app.resize_and_restart(new_size);
+    }
+
+    ui.separator();
+    ui.label("Seed:");
+    let seed_resp = ui.add(egui::TextEdit::singleline(&mut app.seed_text).desired_width(140.0));
+    if seed_resp.lost_focus() {
+        app.setup.rules[0].seed = parse_seed(&app.seed_text);
+        app.sync_texts();
+        app.restart_same_rule();
     }
 }
