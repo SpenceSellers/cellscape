@@ -1,5 +1,5 @@
 use eframe::egui;
-use crate::simulation::{rule_id_from_lookup, CellSource};
+use crate::simulation::{params_to_json, CellSource};
 use crate::gui::CellularApp;
 
 pub struct RandomEditor {
@@ -140,7 +140,7 @@ pub fn draw_rule_editor(app: &mut CellularApp, ui: &mut egui::Ui) {
     if let Some(state) = left_clicked {
         let v = app.params.rule.lookup[state].static_value().unwrap_or(0);
         app.params.rule.lookup[state] = CellSource::Static(((v as usize + 1) % app.params.rule.num_states) as u8);
-        app.rule_text = rule_id_from_lookup(&app.params.rule);
+        app.rule_text = params_to_json(&app.params);
         app.restart_same_rule();
         if app.random_editor.as_ref().map_or(false, |e| e.state_idx == state) {
             app.random_editor = None;
@@ -244,7 +244,7 @@ pub fn draw_random_editor(app: &mut CellularApp, ctx: &egui::Context) {
         } else if weighted.len() > 1 {
             app.params.rule.lookup[state_idx] = CellSource::random(weighted);
         }
-        app.rule_text = rule_id_from_lookup(&app.params.rule);
+        app.rule_text = params_to_json(&app.params);
         app.restart_same_rule();
     }
 
@@ -255,7 +255,7 @@ pub fn draw_random_editor(app: &mut CellularApp, ctx: &egui::Context) {
             .map(|(i, _)| i as u8)
             .unwrap_or(0);
         app.params.rule.lookup[state_idx] = CellSource::Static(v);
-        app.rule_text = rule_id_from_lookup(&app.params.rule);
+        app.rule_text = params_to_json(&app.params);
         app.restart_same_rule();
         app.random_editor = None;
     }

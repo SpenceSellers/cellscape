@@ -9,7 +9,7 @@ mod cell_source;
 pub use cell_source::CellSource;
 
 mod rule_io;
-pub use rule_io::{rule_string_from_lookup, rule_id_from_lookup, parse_rule_id};
+pub use rule_io::{rule_string_from_lookup, rule_id_from_lookup, parse_rule_id, params_to_json, parse_params_json};
 
 pub struct Looped<'a> {
     slice: &'a [u8],
@@ -38,8 +38,11 @@ pub fn all_states(num_states: usize) -> Vec<u8> {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Rule {
+    #[serde(rename="l")]
     pub lookup: Vec<CellSource>,
+    #[serde(rename="w")]
     pub half_width: usize,
+    #[serde(rename="s")]
     pub num_states: usize,
 }
 
@@ -60,7 +63,7 @@ impl Rule {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SimParameters {
     pub rule: Rule,
     pub noise: f64,

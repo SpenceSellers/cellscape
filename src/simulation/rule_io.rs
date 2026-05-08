@@ -1,4 +1,4 @@
-use super::Rule;
+use super::{Rule, SimParameters};
 
 pub fn rule_id_from_lookup(rule: &Rule) -> String {
     serde_json::to_string(rule).expect("Rule serialization cannot fail")
@@ -10,6 +10,14 @@ pub fn parse_rule_id(id: &str) -> Option<Rule> {
 
 pub fn rule_string_from_lookup(rule: &Rule) -> String {
     rule_id_from_lookup(rule)
+}
+
+pub fn params_to_json(params: &SimParameters) -> String {
+    serde_json::to_string(params).expect("SimParameters serialization cannot fail")
+}
+
+pub fn parse_params_json(s: &str) -> Option<SimParameters> {
+    serde_json::from_str(s).ok()
 }
 
 #[cfg(test)]

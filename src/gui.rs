@@ -7,7 +7,7 @@ use crate::glance_view::{Screen, GalleryState, GlanceAction, enter_glance_view, 
 use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_editor::{self, RandomEditor};
 use crate::rule_meta::{draw_rule_meta_params, max_num_states};
-use crate::simulation::{Rule, SimBatch, noise_from_slider, parse_seed, rule_id_from_lookup, parse_rule_id, random_rule, SimParameters};
+use crate::simulation::{SimBatch, noise_from_slider, parse_seed, params_to_json, parse_params_json, random_rule, SimParameters};
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::BATCH_SIZE;
 
@@ -17,11 +17,10 @@ use crate::simulation::spawn_sim;
 use crate::simulation::WasmSimRunner;
 
 #[cfg(target_arch = "wasm32")]
-fn read_url_hash() -> Option<Rule> {
-    use crate::simulation::parse_rule_id;
+fn read_url_hash() -> Option<SimParameters> {
     let hash = web_sys::window()?.location().hash().ok()?;
     let id = hash.trim_start_matches('#');
-    parse_rule_id(id)
+    parse_params_json(id)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -76,16 +75,16 @@ impl CellularApp {
             seed: rand::rng().random::<u64>(),
         };
 
-        if let Some(parsed) = initial_rule.and_then(|s| parse_rule_id(s)) {
-            params.rule = parsed;
+        if let Some(parsed) = initial_rule.and_then(|s| parse_params_json(s)) {
+            params = parsed;
         }
 
         #[cfg(target_arch = "wasm32")]
-        if let Some(hash_rule) = read_url_hash() {
-            params.rule = hash_rule;
+        if let Some(hash_params) = read_url_hash() {
+            params = hash_params;
         }
 
-        let rule_text = rule_id_from_lookup(&params.rule);
+        let rule_text = params_to_json(&params);
 
         #[cfg(not(target_arch = "wasm32"))]
         let receiver = spawn_sim(params.clone(), sim_width, sim_height);
@@ -157,7 +156,7 @@ impl CellularApp {
 
     pub fn new_rule(&mut self) {
         self.params.rule = random_rule(self.params.rule.num_states, self.params.rule.half_width, &mut rand::rng());
-        self.rule_text = rule_id_from_lookup(&self.params.rule);
+        self.rule_text = params_to_json(&self.params);
         self.clear_highlight();
         self.restart_same_rule();
     }
@@ -165,14 +164,14 @@ impl CellularApp {
     pub fn change_num_states(&mut self, new_k: usize) {
         self.state_palette = build_palette(self.selected_palette, new_k);
         self.params.rule = random_rule(new_k, self.params.rule.half_width, &mut rand::rng());
-        self.rule_text = rule_id_from_lookup(&self.params.rule);
+        self.rule_text = params_to_json(&self.params);
         self.clear_highlight();
         self.restart_same_rule();
     }
 
     pub fn change_half_width(&mut self, new_hw: usize) {
         self.params.rule = random_rule(self.params.rule.num_states, new_hw, &mut rand::rng());
-        self.rule_text = rule_id_from_lookup(&self.params.rule);
+        self.rule_text = params_to_json(&self.params);
         self.clear_highlight();
         self.restart_same_rule();
     }
@@ -272,9 +271,9 @@ impl eframe::App for CellularApp {
             match action {
                 GlanceAction::SelectRule(params) => {
                     self.state_palette = build_palette(self.selected_palette, params.rule.num_states);
-                    self.rule_text = rule_id_from_lookup(&params.rule);
-                    self.seed_text = params.seed.to_string();
                     self.params = params;
+                    self.rule_text = params_to_json(&self.params);
+                    self.seed_text = self.params.seed.to_string();
                     self.clear_highlight();
                     self.restart_same_rule();
                     self.current_screen = Screen::Main;
@@ -341,19 +340,20 @@ impl eframe::App for CellularApp {
                     }
 
                     ui.horizontal(|ui| {
-                        ui.label("Rule ID:");
+                        ui.label("Rule JSON:");
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.rule_text).desired_width(220.0),
                         );
                         if resp.lost_focus() {
-                            if let Some(parsed) = parse_rule_id(&self.rule_text) {
-                                self.state_palette = build_palette(self.selected_palette, parsed.num_states);
-                                self.params.rule = parsed;
-                                self.rule_text = rule_id_from_lookup(&self.params.rule);
+                            if let Some(parsed) = parse_params_json(&self.rule_text) {
+                                self.state_palette = build_palette(self.selected_palette, parsed.rule.num_states);
+                                self.params = parsed;
+                                self.seed_text = self.params.seed.to_string();
+                                self.rule_text = params_to_json(&self.params);
                                 self.clear_highlight();
                                 self.restart_same_rule();
                             } else {
-                                self.rule_text = rule_id_from_lookup(&self.params.rule);
+                                self.rule_text = params_to_json(&self.params);
                             }
                         }
                     });
