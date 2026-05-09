@@ -10,7 +10,7 @@ use crate::rule_meta::{draw_rule_meta_params, max_num_states};
 use crate::simulation::{
     SimBatch, MixingMode, SimSetup, SimParameters,
     noise_from_slider, parse_seed, params_to_json, parse_params_json,
-    setup_to_json, parse_setup_json, random_rule, cell_rule_index,
+    setup_to_json_display, parse_setup_json, random_rule, cell_rule_index,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::BATCH_SIZE;
@@ -19,6 +19,13 @@ use crate::simulation::BATCH_SIZE;
 use crate::simulation::spawn_sim;
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::WasmSimRunner;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn scale_mask(img: &image::GrayImage, w: usize, h: usize) -> Vec<u8> {
+    use image::imageops;
+    let scaled = imageops::resize(img, w as u32, h as u32, imageops::FilterType::Lanczos3);
+    scaled.pixels().map(|p| if p[0] >= 128 { 1u8 } else { 0u8 }).collect()
+}
 
 #[cfg(target_arch = "wasm32")]
 fn read_url_hash() -> Option<SimSetup> {
@@ -77,6 +84,9 @@ pub struct CellularApp {
 
     // Which slot "Load from Saved" was triggered from (None = replace whole setup)
     pub saved_rules_slot: Option<usize>,
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mask_source: Option<image::GrayImage>,
 }
 
 impl CellularApp {
@@ -97,7 +107,7 @@ impl CellularApp {
             setup = hash_setup;
         }
 
-        let setup_text = setup_to_json(&setup);
+        let setup_text = setup_to_json_display(&setup);
         let slot_texts: Vec<String> = setup.rules.iter().map(params_to_json).collect();
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -145,6 +155,9 @@ impl CellularApp {
             saved_rules_state: GalleryState::new_saved(),
             random_editor: None,
             saved_rules_slot: None,
+
+            #[cfg(not(target_arch = "wasm32"))]
+            mask_source: None,
         }
     }
 
@@ -169,6 +182,12 @@ impl CellularApp {
         self.texture = None;
         self.cells_data = vec![0u8; size * size];
         self.view_initialized = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Some(ref img), MixingMode::Masked { ref mut mask_data }) =
+            (&self.mask_source, &mut self.setup.mode)
+        {
+            *mask_data = std::sync::Arc::new(scale_mask(img, size, size));
+        }
         self.start_sim();
     }
 
@@ -207,7 +226,7 @@ impl CellularApp {
     }
 
     pub fn sync_texts(&mut self) {
-        self.setup_text = setup_to_json(&self.setup);
+        self.setup_text = setup_to_json_display(&self.setup);
         self.slot_texts.clear();
         for r in &self.setup.rules {
             self.slot_texts.push(params_to_json(r));
@@ -485,6 +504,7 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
         let is_alt = matches!(app.setup.mode, MixingMode::Alternating { .. });
         let is_checkerboard = matches!(app.setup.mode, MixingMode::Checkerboard { .. });
         let is_circle = matches!(app.setup.mode, MixingMode::Circle { .. });
+        let is_masked = matches!(app.setup.mode, MixingMode::Masked { .. });
 
         if ui.selectable_label(is_single, "Single").clicked() && !is_single {
             app.setup.mode = MixingMode::Single;
@@ -540,6 +560,17 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
                 app.setup.rules.push(copy);
             }
             app.setup.mode = MixingMode::Circle { radius_pct: 0.5 };
+            app.sync_texts();
+            app.clear_highlight();
+            app.restart_same_rule();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if ui.selectable_label(is_masked, "Masked").clicked() && !is_masked {
+            if app.setup.rules.len() < 2 {
+                let copy = app.setup.rules[0].clone();
+                app.setup.rules.push(copy);
+            }
+            app.setup.mode = MixingMode::Masked { mask_data: std::sync::Arc::new(Vec::new()) };
             app.sync_texts();
             app.clear_highlight();
             app.restart_same_rule();
@@ -603,6 +634,28 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
             });
         }
         MixingMode::Single => {}
+        MixingMode::Masked { mask_data } => {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if ui.button("Upload mask image…").clicked() {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Images", &["png", "jpg", "jpeg", "bmp", "gif", "webp", "tiff"])
+                        .pick_file()
+                    {
+                        if let Ok(dyn_img) = image::open(&path) {
+                            let gray = dyn_img.into_luma8();
+                            let scaled = std::sync::Arc::new(scale_mask(&gray, app.sim_width, app.sim_height));
+                            app.setup.mode = MixingMode::Masked { mask_data: scaled };
+                            app.mask_source = Some(gray);
+                            app.restart_same_rule();
+                        }
+                    }
+                }
+                if mask_data.is_empty() {
+                    ui.label("No mask loaded — all cells use rule A.");
+                }
+            }
+        }
     }
     if let Some(mode) = new_mode {
         app.setup.mode = mode;
@@ -766,7 +819,7 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
                 app.clear_highlight();
                 app.restart_same_rule();
             } else {
-                app.setup_text = setup_to_json(&app.setup);
+                app.setup_text = setup_to_json_display(&app.setup);
             }
         }
     });

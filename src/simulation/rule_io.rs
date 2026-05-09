@@ -1,4 +1,5 @@
-use super::{Rule, SimParameters, SimSetup};
+use std::sync::Arc;
+use super::{MixingMode, Rule, SimParameters, SimSetup};
 
 pub fn rule_id_from_lookup(rule: &Rule) -> String {
     serde_json::to_string(rule).expect("Rule serialization cannot fail")
@@ -22,6 +23,17 @@ pub fn parse_params_json(s: &str) -> Option<SimParameters> {
 
 pub fn setup_to_json(setup: &SimSetup) -> String {
     serde_json::to_string(setup).expect("SimSetup serialization cannot fail")
+}
+
+/// Like setup_to_json but omits mask pixel data — safe to store in a UI text field.
+pub fn setup_to_json_display(setup: &SimSetup) -> String {
+    if let MixingMode::Masked { .. } = setup.mode {
+        let mut stripped = setup.clone();
+        stripped.mode = MixingMode::Masked { mask_data: Arc::new(Vec::new()) };
+        setup_to_json(&stripped)
+    } else {
+        setup_to_json(setup)
+    }
 }
 
 pub fn parse_setup_json(s: &str) -> Option<SimSetup> {

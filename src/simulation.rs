@@ -1,5 +1,22 @@
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+mod base64_serde {
+    use std::sync::Arc;
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(data: &Arc<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&STANDARD.encode(data.as_ref()))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Arc<Vec<u8>>, D::Error> {
+        let encoded = String::deserialize(d)?;
+        let bytes = STANDARD.decode(encoded).map_err(serde::de::Error::custom)?;
+        Ok(Arc::new(bytes))
+    }
+}
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -10,7 +27,8 @@ pub use cell_source::CellSource;
 
 mod rule_io;
 pub use rule_io::{rule_string_from_lookup, rule_id_from_lookup, parse_rule_id,
-                  params_to_json, parse_params_json, setup_to_json, parse_setup_json};
+                  params_to_json, parse_params_json, setup_to_json, setup_to_json_display,
+                  parse_setup_json};
 
 pub struct Looped<'a> {
     slice: &'a [u8],
@@ -89,6 +107,12 @@ pub enum MixingMode {
     Checkerboard { #[serde(rename = "s")] square_size: u32 },
     #[serde(rename = "C")]
     Circle { #[serde(rename = "r")] radius_pct: f32 },
+    #[serde(rename = "Mk")]
+    Masked {
+        // w*h entries: 0 = rule 0, 1 = rule 1, base64-encoded. Arc so cloning the mode is cheap.
+        #[serde(with = "base64_serde", default)]
+        mask_data: Arc<Vec<u8>>,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -154,6 +178,14 @@ fn rule_index_for(setup: &SimSetup, col: usize, row: usize, w: usize, h: usize) 
             let dy = row as f32 - h as f32 / 2.0;
             let r = radius_pct * w.min(h) as f32 / 2.0;
             if dx * dx + dy * dy <= r * r { 1 } else { 0 }
+        }
+        MixingMode::Masked { ref mask_data } => {
+            let idx = row * w + col;
+            if idx < mask_data.len() {
+                (mask_data[idx] as usize).min(n - 1)
+            } else {
+                0
+            }
         }
     }
 }
