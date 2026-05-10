@@ -28,7 +28,7 @@ pub use cell_source::CellSource;
 mod rule_io;
 pub use rule_io::{rule_string_from_lookup, rule_id_from_lookup, parse_rule_id,
                   params_to_json, parse_params_json, setup_to_json, setup_to_json_display,
-                  parse_setup_json};
+                  parse_setup_json, load_saved_rules, persist_saved_rules};
 
 pub struct Looped<'a> {
     slice: &'a [u8],
@@ -94,20 +94,20 @@ pub struct SimParameters {
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum MixingMode {
     Single,
-    #[serde(rename = "V")]
+    #[serde(rename = "vert")]
     VerticalDivide { #[serde(rename = "f")] fraction: f32 },
-    #[serde(rename = "H")]
+    #[serde(rename = "horiz")]
     HorizontalDivide { #[serde(rename = "f")] fraction: f32 },
-    #[serde(rename = "A")]
+    #[serde(rename = "alt")]
     Alternating {
         #[serde(rename = "h")] stripe_height: u32,
         #[serde(rename = "v", default)] vertical: bool,
     },
-    #[serde(rename = "CB")]
+    #[serde(rename = "checker", alias = "CB")]
     Checkerboard { #[serde(rename = "s")] square_size: u32 },
-    #[serde(rename = "C")]
+    #[serde(rename = "circle")]
     Circle { #[serde(rename = "r")] radius_pct: f32 },
-    #[serde(rename = "Mk")]
+    #[serde(rename = "masked")]
     Masked {
         // w*h entries: 0 = rule 0, 1 = rule 1, base64-encoded. Arc so cloning the mode is cheap.
         #[serde(with = "base64_serde", default)]

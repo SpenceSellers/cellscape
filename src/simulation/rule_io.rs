@@ -47,6 +47,40 @@ pub fn parse_setup_json(s: &str) -> Option<SimSetup> {
     None
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_saved_rules() -> Vec<SimParameters> {
+    std::fs::read_to_string("saved-rules.json")
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn persist_saved_rules(rules: &[SimParameters]) {
+    if let Ok(json) = serde_json::to_string(rules) {
+        let _ = std::fs::write("saved-rules.json", json);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn load_saved_rules() -> Vec<SimParameters> {
+    (|| -> Option<Vec<SimParameters>> {
+        let storage = web_sys::window()?.local_storage().ok()??;
+        let json = storage.get_item("saved-rules").ok()??;
+        serde_json::from_str(&json).ok()
+    })()
+    .unwrap_or_default()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn persist_saved_rules(rules: &[SimParameters]) {
+    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        if let Ok(json) = serde_json::to_string(rules) {
+            let _ = storage.set_item("saved-rules", &json);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

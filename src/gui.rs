@@ -11,6 +11,7 @@ use crate::simulation::{
     SimBatch, MixingMode, SimSetup, SimParameters,
     noise_from_slider, parse_seed, params_to_json, parse_params_json,
     setup_to_json_display, parse_setup_json, random_rule, cell_rule_index,
+    load_saved_rules, persist_saved_rules,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::simulation::BATCH_SIZE;
@@ -155,7 +156,7 @@ impl CellularApp {
             current_screen: Screen::Main,
             glance_state: GalleryState::new_glance(),
             adjacent_state: GalleryState::new_adjacent(),
-            saved_rules: Vec::new(),
+            saved_rules: load_saved_rules(),
             saved_rules_state: GalleryState::new_saved(),
             random_editor: None,
             saved_rules_slot: None,
@@ -777,6 +778,7 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
             SlotChangeKind::NewRandom => app.new_rule_for_slot(slot),
             SlotChangeKind::SaveRule => {
                 app.saved_rules.push(app.setup.rules[slot].clone());
+                persist_saved_rules(&app.saved_rules);
             }
             SlotChangeKind::LoadFromSaved => {
                 if !app.saved_rules.is_empty() {
