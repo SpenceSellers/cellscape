@@ -29,15 +29,19 @@ fn scale_mask(img: &image::GrayImage, w: usize, h: usize) -> Vec<u8> {
 
 #[cfg(target_arch = "wasm32")]
 fn read_url_hash() -> Option<SimSetup> {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     let hash = web_sys::window()?.location().hash().ok()?;
     let id = hash.trim_start_matches('#');
-    parse_setup_json(id)
+    let json = String::from_utf8(URL_SAFE_NO_PAD.decode(id).ok()?).ok()?;
+    parse_setup_json(&json)
 }
 
 #[cfg(target_arch = "wasm32")]
 fn write_url_hash(s: &str) {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let encoded = URL_SAFE_NO_PAD.encode(s);
     if let Some(win) = web_sys::window() {
-        let _ = win.location().set_hash(s);
+        let _ = win.location().set_hash(&encoded);
     }
 }
 
