@@ -68,6 +68,7 @@ pub struct CellularApp {
     pub setup: SimSetup,
     pub setup_text: String,
     pub slot_texts: Vec<String>,
+    pub slot_preview_textures: Vec<Option<egui::TextureHandle>>,
 
     pub state_palette: Vec<egui::Color32>,
     pub selected_palette: ColorPalette,
@@ -141,6 +142,7 @@ impl CellularApp {
             seed_text: setup.rules[0].seed.to_string(),
             setup_text,
             slot_texts,
+            slot_preview_textures: Vec::new(),
             setup,
 
             state_palette,
@@ -250,6 +252,7 @@ impl CellularApp {
         for r in &self.setup.rules {
             self.slot_texts.push(params_to_json(r));
         }
+        self.slot_preview_textures.iter_mut().for_each(|t| *t = None);
     }
 
     pub fn sync_slot_texts(&mut self) {
@@ -588,6 +591,7 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
     ui.separator();
     if draw_palette_params(ui, &mut app.selected_palette, &mut app.state_palette, app.setup.max_num_states()) {
         app.rebuild_texture(ui.ctx());
+        app.slot_preview_textures.iter_mut().for_each(|t| *t = None);
     }
 
     ui.separator();

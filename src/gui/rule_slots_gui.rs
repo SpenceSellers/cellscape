@@ -1,8 +1,23 @@
 use eframe::egui;
 use crate::glance_view::{enter_saved_rules_view, Screen};
 use crate::rule_meta::draw_rule_meta_params;
-use crate::simulation::{params_to_json, persist_saved_rules};
+use crate::simulation::{compute_sim, params_to_json, persist_saved_rules, rule_string_from_lookup};
 use super::CellularApp;
+
+const PREVIEW_W: usize = 80;
+const PREVIEW_H: usize = 50;
+const PREVIEW_PRERUN: usize = 40;
+const PREVIEW_DISPLAY_W: f32 = 160.0;
+const PREVIEW_DISPLAY_H: f32 = 100.0;
+
+fn tex_options() -> egui::TextureOptions {
+    egui::TextureOptions {
+        magnification: egui::TextureFilter::Nearest,
+        minification: egui::TextureFilter::Linear,
+        mipmap_mode: Some(egui::TextureFilter::Linear),
+        ..Default::default()
+    }
+}
 
 struct SlotChange {
     slot: usize,
@@ -37,6 +52,30 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
         };
 
         let draw_slot_contents = |ui: &mut egui::Ui, app: &mut CellularApp, pending: &mut Option<SlotChange>| {
+            // Ensure preview vec is large enough
+            while app.slot_preview_textures.len() <= slot {
+                app.slot_preview_textures.push(None);
+            }
+            if app.slot_preview_textures[slot].is_none() {
+                let raw = compute_sim(&app.setup.rules[slot], PREVIEW_W, PREVIEW_H, PREVIEW_PRERUN);
+                let pixels: Vec<egui::Color32> = raw.iter()
+                    .map(|&v| app.state_palette[v as usize % app.state_palette.len()])
+                    .collect();
+                let image = egui::ColorImage { size: [PREVIEW_W, PREVIEW_H], pixels };
+                let name = format!("slot_preview_{}_{}",
+                    rule_string_from_lookup(&app.setup.rules[slot].rule),
+                    app.setup.rules[slot].seed);
+                app.slot_preview_textures[slot] = Some(ui.ctx().load_texture(name, image, tex_options()));
+            }
+            if let Some(tex) = &app.slot_preview_textures[slot] {
+                let resp = ui.allocate_response(
+                    egui::vec2(PREVIEW_DISPLAY_W, PREVIEW_DISPLAY_H),
+                    egui::Sense::hover(),
+                );
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                ui.painter_at(resp.rect).image(tex.id(), resp.rect, uv, egui::Color32::WHITE);
+            }
+
             let mut num_states = app.setup.rules[slot].rule.num_states;
             let mut half_width = app.setup.rules[slot].rule.half_width;
             let mut noise = app.setup.rules[slot].noise;
