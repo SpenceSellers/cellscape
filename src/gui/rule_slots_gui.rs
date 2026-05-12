@@ -16,7 +16,6 @@ enum SlotChangeKind {
     NewRandom,
     LoadFromSaved,
     SaveRule,
-    EditThis,
     RemoveSlot,
 }
 
@@ -65,29 +64,28 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
                 if ui.button("New random").clicked() && pending.is_none() {
                     *pending = Some(SlotChange { slot, kind: SlotChangeKind::NewRandom });
                 }
-                let edit_label = if app.editor_active_rule == slot && app.show_rule_editor {
-                    "Editing ✓"
-                } else {
-                    "Edit this rule"
-                };
-                if ui.button(edit_label).clicked() && pending.is_none() {
-                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::EditThis });
-                }
-                if app.setup.mode.supports_variable_rules() && num_rule_slots > 1 {
-                    if ui.button("- Remove Rule").clicked() && pending.is_none() {
-                        *pending = Some(SlotChange { slot, kind: SlotChangeKind::RemoveSlot });
-                    }
-                }
             });
         };
 
         if multi {
-            egui::CollapsingHeader::new(&label)
-                .default_open(true)
-                .id_salt(format!("rule_slot_{slot}"))
-                .show(ui, |ui| {
-                    draw_slot_contents(ui, app, &mut pending);
-                });
+            let can_remove = app.setup.mode.supports_variable_rules();
+            let mut remove_clicked = false;
+            let id = ui.make_persistent_id(format!("rule_slot_{slot}"));
+            let state = egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(), id, true,
+            );
+            let header = state.show_header(ui, |ui| {
+                ui.label(&label);
+                if can_remove {
+                    remove_clicked = ui.button("🗑").clicked();
+                }
+            });
+            header.body(|ui| {
+                draw_slot_contents(ui, app, &mut pending);
+            });
+            if remove_clicked && pending.is_none() {
+                pending = Some(SlotChange { slot, kind: SlotChangeKind::RemoveSlot });
+            }
         } else {
             draw_slot_contents(ui, app, &mut pending);
         }
@@ -130,10 +128,6 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
                     enter_saved_rules_view(&mut app.saved_rules_state, &app.saved_rules);
                     app.current_screen = Screen::SavedRules;
                 }
-            }
-            SlotChangeKind::EditThis => {
-                app.editor_active_rule = slot;
-                app.show_rule_editor = true;
             }
         }
     }
