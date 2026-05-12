@@ -115,14 +115,6 @@ impl GalleryState {
     }
 }
 
-fn tex_options() -> egui::TextureOptions {
-    egui::TextureOptions {
-        magnification: egui::TextureFilter::Nearest,
-        minification: egui::TextureFilter::Linear,
-        mipmap_mode: Some(egui::TextureFilter::Linear),
-        ..Default::default()
-    }
-}
 
 pub fn enter_glance_view(state: &mut GalleryState, num_states: usize, half_width: usize) {
     state.num_states = num_states;
@@ -174,12 +166,10 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
             entry.texture = None;
         }
         if entry.texture.is_none() {
-            let pixels: Vec<egui::Color32> = entry.pixels.iter()
-                .map(|&v| state.palette[v as usize % state.palette.len()])
-                .collect();
-            let image = egui::ColorImage { size: [expected_size, expected_size], pixels };
             let tex_name = format!("gallery_{}_{}", rule_string_from_lookup(&entry.params.rule), entry.params.seed);
-            entry.texture = Some(ctx.load_texture(tex_name, image, tex_options()));
+            entry.texture = Some(crate::texture::make_sim_texture(
+                ctx, &tex_name, &entry.pixels, expected_size, expected_size, &state.palette,
+            ));
         }
     }
 

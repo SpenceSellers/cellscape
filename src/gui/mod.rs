@@ -265,17 +265,16 @@ impl CellularApp {
 
     fn rebuild_texture(&mut self, ctx: &egui::Context) {
         if self.rows_done == 0 { return; }
-        let pixels: Vec<egui::Color32> = self.cells_data[..self.rows_done * self.sim_width]
-            .iter()
-            .map(|&v| self.state_palette[v as usize % self.state_palette.len()])
-            .collect();
-        let image = egui::ColorImage { size: [self.sim_width, self.rows_done], pixels };
+        let image = crate::texture::cells_to_color_image(
+            &self.cells_data[..self.rows_done * self.sim_width],
+            self.sim_width, self.rows_done, &self.state_palette,
+        );
         match &mut self.texture {
-            Some(tex) => { tex.set_partial([0, 0], image, tex_options()); }
+            Some(tex) => { tex.set_partial([0, 0], image, crate::texture::tex_options()); }
             None => {
                 let black = egui::ColorImage::new([self.sim_width, self.sim_height], egui::Color32::BLACK);
-                let mut tex = ctx.load_texture("sim", black, tex_options());
-                tex.set_partial([0, 0], image, tex_options());
+                let mut tex = ctx.load_texture("sim", black, crate::texture::tex_options());
+                tex.set_partial([0, 0], image, crate::texture::tex_options());
                 self.texture = Some(tex);
             }
         }
@@ -310,16 +309,15 @@ impl CellularApp {
             let col = i % self.sim_width;
             self.cells_data[row * self.sim_width + col] = v;
         }
-        let pixels: Vec<egui::Color32> = batch.pixels.iter()
-            .map(|&v| self.state_palette[v as usize % self.state_palette.len()])
-            .collect();
-        let partial = egui::ColorImage { size: [self.sim_width, count], pixels };
+        let partial = crate::texture::cells_to_color_image(
+            &batch.pixels, self.sim_width, count, &self.state_palette,
+        );
         match &mut self.texture {
-            Some(tex) => { tex.set_partial([0, batch.start], partial, tex_options()); }
+            Some(tex) => { tex.set_partial([0, batch.start], partial, crate::texture::tex_options()); }
             None => {
                 let black = egui::ColorImage::new([self.sim_width, self.sim_height], egui::Color32::BLACK);
-                let mut tex = ctx.load_texture("sim", black, tex_options());
-                tex.set_partial([0, batch.start], partial, tex_options());
+                let mut tex = ctx.load_texture("sim", black, crate::texture::tex_options());
+                tex.set_partial([0, batch.start], partial, crate::texture::tex_options());
                 self.texture = Some(tex);
             }
         }
@@ -327,14 +325,6 @@ impl CellularApp {
     }
 }
 
-fn tex_options() -> egui::TextureOptions {
-    egui::TextureOptions {
-        magnification: egui::TextureFilter::Nearest,
-        minification: egui::TextureFilter::Linear,
-        mipmap_mode: Some(egui::TextureFilter::Linear),
-        ..Default::default()
-    }
-}
 
 impl eframe::App for CellularApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

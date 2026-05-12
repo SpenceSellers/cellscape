@@ -3,6 +3,7 @@ pub mod rule_editor;
 pub mod rule_meta;
 pub mod palette;
 pub mod glance_view;
+pub mod texture;
 pub mod gui;
 
 #[cfg(target_arch = "wasm32")]

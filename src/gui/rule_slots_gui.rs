@@ -10,14 +10,6 @@ const PREVIEW_PRERUN: usize = 40;
 const PREVIEW_DISPLAY_W: f32 = 160.0;
 const PREVIEW_DISPLAY_H: f32 = 100.0;
 
-fn tex_options() -> egui::TextureOptions {
-    egui::TextureOptions {
-        magnification: egui::TextureFilter::Nearest,
-        minification: egui::TextureFilter::Linear,
-        mipmap_mode: Some(egui::TextureFilter::Linear),
-        ..Default::default()
-    }
-}
 
 struct SlotChange {
     slot: usize,
@@ -55,14 +47,12 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
         let draw_slot_contents = |ui: &mut egui::Ui, app: &mut CellularApp, pending: &mut Option<SlotChange>| {
             if app.rule_slots[slot].preview_texture.is_none() {
                 let raw = compute_sim(&app.setup.rules[slot], PREVIEW_W, PREVIEW_H, PREVIEW_PRERUN);
-                let pixels: Vec<egui::Color32> = raw.iter()
-                    .map(|&v| app.state_palette[v as usize % app.state_palette.len()])
-                    .collect();
-                let image = egui::ColorImage { size: [PREVIEW_W, PREVIEW_H], pixels };
                 let name = format!("slot_preview_{}_{}",
                     rule_string_from_lookup(&app.setup.rules[slot].rule),
                     app.setup.rules[slot].seed);
-                app.rule_slots[slot].preview_texture = Some(ui.ctx().load_texture(name, image, tex_options()));
+                app.rule_slots[slot].preview_texture = Some(crate::texture::make_sim_texture(
+                    ui.ctx(), &name, &raw, PREVIEW_W, PREVIEW_H, &app.state_palette,
+                ));
             }
             if let Some(tex) = &app.rule_slots[slot].preview_texture {
                 let resp = ui.allocate_response(
