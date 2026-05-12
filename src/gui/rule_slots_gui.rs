@@ -2,7 +2,7 @@ use eframe::egui;
 use crate::glance_view::{enter_saved_rules_view, Screen};
 use crate::rule_meta::draw_rule_meta_params;
 use crate::simulation::{compute_sim, params_to_json, persist_saved_rules, rule_string_from_lookup};
-use super::CellularApp;
+use super::{CellularApp, RuleSlot};
 
 const PREVIEW_W: usize = 80;
 const PREVIEW_H: usize = 50;
@@ -41,8 +41,9 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
     let mut pending: Option<SlotChange> = None;
 
     for slot in 0..num_rule_slots {
-        if slot >= app.slot_texts.len() {
-            app.slot_texts.push(params_to_json(&app.setup.rules[slot]));
+        while app.rule_slots.len() <= slot {
+            let i = app.rule_slots.len();
+            app.rule_slots.push(RuleSlot { text: params_to_json(&app.setup.rules[i]), preview_texture: None });
         }
 
         let label = if multi {
@@ -52,11 +53,7 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
         };
 
         let draw_slot_contents = |ui: &mut egui::Ui, app: &mut CellularApp, pending: &mut Option<SlotChange>| {
-            // Ensure preview vec is large enough
-            while app.slot_preview_textures.len() <= slot {
-                app.slot_preview_textures.push(None);
-            }
-            if app.slot_preview_textures[slot].is_none() {
+            if app.rule_slots[slot].preview_texture.is_none() {
                 let raw = compute_sim(&app.setup.rules[slot], PREVIEW_W, PREVIEW_H, PREVIEW_PRERUN);
                 let pixels: Vec<egui::Color32> = raw.iter()
                     .map(|&v| app.state_palette[v as usize % app.state_palette.len()])
@@ -65,9 +62,9 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
                 let name = format!("slot_preview_{}_{}",
                     rule_string_from_lookup(&app.setup.rules[slot].rule),
                     app.setup.rules[slot].seed);
-                app.slot_preview_textures[slot] = Some(ui.ctx().load_texture(name, image, tex_options()));
+                app.rule_slots[slot].preview_texture = Some(ui.ctx().load_texture(name, image, tex_options()));
             }
-            if let Some(tex) = &app.slot_preview_textures[slot] {
+            if let Some(tex) = &app.rule_slots[slot].preview_texture {
                 let resp = ui.allocate_response(
                     egui::vec2(PREVIEW_DISPLAY_W, PREVIEW_DISPLAY_H),
                     egui::Sense::hover(),

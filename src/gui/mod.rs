@@ -53,6 +53,11 @@ fn wrapping_idx(i: isize, m: usize) -> usize {
     ((i % m as isize + m as isize) % m as isize) as usize
 }
 
+pub struct RuleSlot {
+    pub text: String,
+    pub preview_texture: Option<egui::TextureHandle>,
+}
+
 pub struct CellularApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub receiver: mpsc::Receiver<SimBatch>,
@@ -67,8 +72,7 @@ pub struct CellularApp {
 
     pub setup: SimSetup,
     pub setup_text: String,
-    pub slot_texts: Vec<String>,
-    pub slot_preview_textures: Vec<Option<egui::TextureHandle>>,
+    pub rule_slots: Vec<RuleSlot>,
 
     pub state_palette: Vec<egui::Color32>,
     pub selected_palette: ColorPalette,
@@ -117,7 +121,9 @@ impl CellularApp {
         }
 
         let setup_text = setup_to_json_display(&setup);
-        let slot_texts: Vec<String> = setup.rules.iter().map(params_to_json).collect();
+        let rule_slots: Vec<RuleSlot> = setup.rules.iter()
+            .map(|r| RuleSlot { text: params_to_json(r), preview_texture: None })
+            .collect();
 
         #[cfg(not(target_arch = "wasm32"))]
         let receiver = spawn_sim(setup.clone(), sim_width, sim_height);
@@ -141,8 +147,7 @@ impl CellularApp {
 
             seed_text: setup.rules[0].seed.to_string(),
             setup_text,
-            slot_texts,
-            slot_preview_textures: Vec::new(),
+            rule_slots,
             setup,
 
             state_palette,
@@ -248,11 +253,10 @@ impl CellularApp {
 
     pub fn sync_texts(&mut self) {
         self.setup_text = setup_to_json_display(&self.setup);
-        self.slot_texts.clear();
+        self.rule_slots.clear();
         for r in &self.setup.rules {
-            self.slot_texts.push(params_to_json(r));
+            self.rule_slots.push(RuleSlot { text: params_to_json(r), preview_texture: None });
         }
-        self.slot_preview_textures.iter_mut().for_each(|t| *t = None);
     }
 
     pub fn sync_slot_texts(&mut self) {
@@ -591,7 +595,7 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
     ui.separator();
     if draw_palette_params(ui, &mut app.selected_palette, &mut app.state_palette, app.setup.max_num_states()) {
         app.rebuild_texture(ui.ctx());
-        app.slot_preview_textures.iter_mut().for_each(|t| *t = None);
+        app.rule_slots.iter_mut().for_each(|s| s.preview_texture = None);
     }
 
     ui.separator();
