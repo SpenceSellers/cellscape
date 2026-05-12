@@ -196,6 +196,17 @@ impl CellularApp {
         self.start_sim();
     }
 
+    pub fn push_random_slot(&mut self) {
+        let src = &self.setup.rules[0];
+        let k = src.rule.num_states;
+        let hw = src.rule.half_width;
+        self.setup.rules.push(SimParameters {
+            rule: random_rule(k, hw, &mut rand::rng()),
+            noise: src.noise,
+            seed: src.seed,
+        });
+    }
+
     pub fn new_rule_for_slot(&mut self, slot: usize) {
         let k = self.setup.rules[slot].rule.num_states;
         let hw = self.setup.rules[slot].rule.half_width;
@@ -527,50 +538,39 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
             app.restart_same_rule();
         }
         if ui.selectable_label(is_vert, "Vertical").clicked() && !is_vert {
-            if app.setup.rules.len() < 2 {
-                let copy = app.setup.rules[0].clone();
-                app.setup.rules.push(copy);
-            }
+            if app.setup.rules.len() < 2 { app.push_random_slot(); }
+            app.setup.rules.truncate(2);
             app.setup.mode = MixingMode::VerticalDivide { fraction: 0.5 };
             app.sync_texts();
             app.clear_highlight();
             app.restart_same_rule();
         }
         if ui.selectable_label(is_horiz, "Horizontal").clicked() && !is_horiz {
-            if app.setup.rules.len() < 2 {
-                let copy = app.setup.rules[0].clone();
-                app.setup.rules.push(copy);
-            }
+            if app.setup.rules.len() < 2 { app.push_random_slot(); }
+            app.setup.rules.truncate(2);
             app.setup.mode = MixingMode::HorizontalDivide { fraction: 0.5 };
             app.sync_texts();
             app.clear_highlight();
             app.restart_same_rule();
         }
         if ui.selectable_label(is_alt, "Alternating").clicked() && !is_alt {
-            if app.setup.rules.len() < 2 {
-                let copy = app.setup.rules[0].clone();
-                app.setup.rules.push(copy);
-            }
+            if app.setup.rules.len() < 2 { app.push_random_slot(); }
             app.setup.mode = MixingMode::Alternating { stripe_height: 20, vertical: false };
             app.sync_texts();
             app.clear_highlight();
             app.restart_same_rule();
         }
         if ui.selectable_label(is_checkerboard, "Checkerboard").clicked() && !is_checkerboard {
-            if app.setup.rules.len() < 2 {
-                let copy = app.setup.rules[0].clone();
-                app.setup.rules.push(copy);
-            }
+            if app.setup.rules.len() < 2 { app.push_random_slot(); }
+            app.setup.rules.truncate(2);
             app.setup.mode = MixingMode::Checkerboard { square_size: 20 };
             app.sync_texts();
             app.clear_highlight();
             app.restart_same_rule();
         }
         if ui.selectable_label(is_circle, "Circle").clicked() && !is_circle {
-            if app.setup.rules.len() < 2 {
-                let copy = app.setup.rules[0].clone();
-                app.setup.rules.push(copy);
-            }
+            if app.setup.rules.len() < 2 { app.push_random_slot(); }
+            app.setup.rules.truncate(2);
             app.setup.mode = MixingMode::Circle { radius_pct: 0.5 };
             app.sync_texts();
             app.clear_highlight();
@@ -578,10 +578,8 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
         }
         #[cfg(not(target_arch = "wasm32"))]
         if ui.selectable_label(is_masked, "Masked").clicked() && !is_masked {
-            if app.setup.rules.len() < 2 {
-                let copy = app.setup.rules[0].clone();
-                app.setup.rules.push(copy);
-            }
+            if app.setup.rules.len() < 2 { app.push_random_slot(); }
+            app.setup.rules.truncate(2);
             app.setup.mode = MixingMode::Masked { mask_data: std::sync::Arc::new(Vec::new()) };
             app.sync_texts();
             app.clear_highlight();
@@ -614,7 +612,10 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
         MixingMode::Alternating { mut stripe_height, mut vertical } => {
             ui.horizontal(|ui| {
                 ui.label("Stripe size:");
-                let resp = ui.add(egui::Slider::new(&mut stripe_height, 1u32..=200).suffix(" rows").integer());
+                let resp = ui.add(egui::DragValue::new(&mut stripe_height).suffix(" rows").range(1u32..=u32::MAX));
+                if resp.changed() {
+                    app.setup.mode = MixingMode::Alternating { stripe_height, vertical };
+                }
                 if resp.drag_stopped() || resp.lost_focus() {
                     new_mode = Some(MixingMode::Alternating { stripe_height, vertical });
                 }
@@ -695,6 +696,7 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
         SaveRule,
         EditThis,
         ParseJson(String),
+        RemoveSlot,
     }
 
     let mut pending: Option<SlotChange> = None;
@@ -756,6 +758,11 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
                 if ui.button(edit_label).clicked() && pending.is_none() {
                     *pending = Some(SlotChange { slot, kind: SlotChangeKind::EditThis });
                 }
+                if app.setup.mode.supports_variable_rules() && num_rule_slots > 1 {
+                    if ui.button("- Remove Rule").clicked() && pending.is_none() {
+                        *pending = Some(SlotChange { slot, kind: SlotChangeKind::RemoveSlot });
+                    }
+                }
             });
         };
 
@@ -771,6 +778,14 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
         }
     }
 
+    if app.setup.mode.supports_variable_rules() {
+        if ui.button("+ Add Rule").clicked() {
+            app.push_random_slot();
+            app.sync_texts();
+            app.restart_same_rule();
+        }
+    }
+
     // Apply the collected change
     if let Some(change) = pending {
         let slot = change.slot;
@@ -783,6 +798,12 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
                 app.restart_same_rule();
             }
             SlotChangeKind::NewRandom => app.new_rule_for_slot(slot),
+            SlotChangeKind::RemoveSlot => {
+                app.setup.rules.remove(slot);
+                app.editor_active_rule = app.editor_active_rule.min(app.setup.rules.len() - 1);
+                app.sync_texts();
+                app.restart_same_rule();
+            }
             SlotChangeKind::SaveRule => {
                 app.saved_rules.push(app.setup.rules[slot].clone());
                 persist_saved_rules(&app.saved_rules);

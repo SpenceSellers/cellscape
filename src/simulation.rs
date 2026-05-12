@@ -116,6 +116,10 @@ pub enum MixingMode {
 }
 
 impl MixingMode {
+    pub fn supports_variable_rules(&self) -> bool {
+        matches!(self, MixingMode::Alternating { .. })
+    }
+
     pub fn slot_label(&self, slot: usize) -> String {
         match (self, slot) {
             (MixingMode::VerticalDivide { .. }, 0) => "Top Rule".to_string(),
@@ -182,7 +186,7 @@ fn rule_index_for(setup: &SimSetup, col: usize, row: usize, w: usize, h: usize) 
             if row < (h as f32 * fraction) as usize { 0 } else { 1 },
         MixingMode::Alternating { stripe_height, vertical } => {
             let sq = stripe_height.max(1) as usize;
-            if vertical { (col / sq) % 2 } else { (row / sq) % 2 }
+            if vertical { (col / sq) % n } else { (row / sq) % n }
         }
         MixingMode::Checkerboard { square_size } => {
             let sq = square_size.max(1) as usize;
