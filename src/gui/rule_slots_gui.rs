@@ -4,11 +4,11 @@ use crate::rule_meta::draw_rule_meta_params;
 use crate::simulation::{compute_sim, params_to_json, persist_saved_rules, rule_string_from_lookup};
 use super::{CellularApp, RuleSlot};
 
-const PREVIEW_W: usize = 80;
-const PREVIEW_H: usize = 50;
+const PREVIEW_W: usize = 320;
+const PREVIEW_H: usize = 150;
 const PREVIEW_PRERUN: usize = 40;
 const PREVIEW_DISPLAY_W: f32 = 160.0;
-const PREVIEW_DISPLAY_H: f32 = 100.0;
+const PREVIEW_DISPLAY_H: f32 = 75.0;
 
 
 struct SlotChange {
