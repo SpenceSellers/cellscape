@@ -94,14 +94,15 @@ pub struct SimParameters {
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum MixingMode {
     Single,
-    #[serde(rename = "vert")]
-    VerticalDivide { #[serde(rename = "f")] fraction: f32 },
-    #[serde(rename = "horiz")]
-    HorizontalDivide { #[serde(rename = "f")] fraction: f32 },
+    #[serde(rename = "div")]
+    Divided {
+        #[serde(rename = "f")] fraction: f32,
+        #[serde(rename = "a", default)] angle_degrees: f32,
+    },
     #[serde(rename = "alt")]
     Alternating {
         #[serde(rename = "h")] stripe_height: u32,
-        #[serde(rename = "v", default)] vertical: bool,
+        #[serde(rename = "a", default)] angle_degrees: f32,
     },
     #[serde(rename = "checker", alias = "CB")]
     Checkerboard { #[serde(rename = "s")] square_size: u32 },
@@ -122,10 +123,6 @@ impl MixingMode {
 
     pub fn slot_label(&self, slot: usize) -> String {
         match (self, slot) {
-            (MixingMode::VerticalDivide { .. }, 0) => "Top Rule".to_string(),
-            (MixingMode::VerticalDivide { .. }, _) => "Bottom Rule".to_string(),
-            (MixingMode::HorizontalDivide { .. }, 0) => "Left Rule".to_string(),
-            (MixingMode::HorizontalDivide { .. }, _) => "Right Rule".to_string(),
             (MixingMode::Circle { .. }, 0) => "Inside Circle".to_string(),
             (MixingMode::Circle { .. }, _) => "Outside Circle".to_string(),
             (_, 0) => "Rule A".to_string(),
@@ -180,13 +177,19 @@ fn rule_index_for(setup: &SimSetup, col: usize, row: usize, w: usize, h: usize) 
     if n <= 1 { return 0; }
     match setup.mode {
         MixingMode::Single => 0,
-        MixingMode::VerticalDivide { fraction } =>
-            if col < (w as f32 * fraction) as usize { 0 } else { 1 },
-        MixingMode::HorizontalDivide { fraction } =>
-            if row < (h as f32 * fraction) as usize { 0 } else { 1 },
-        MixingMode::Alternating { stripe_height, vertical } => {
-            let sq = stripe_height.max(1) as usize;
-            if vertical { (col / sq) % n } else { (row / sq) % n }
+        MixingMode::Divided { fraction, angle_degrees } => {
+            let theta = angle_degrees.to_radians();
+            let (s, c) = (theta.sin(), theta.cos());
+            let proj = col as f32 * s + row as f32 * c;
+            let min_proj = f32::min(0.0, (w as f32 - 1.0) * s) + f32::min(0.0, (h as f32 - 1.0) * c);
+            let max_proj = f32::max(0.0, (w as f32 - 1.0) * s) + f32::max(0.0, (h as f32 - 1.0) * c);
+            if proj < min_proj + fraction * (max_proj - min_proj) { 0 } else { 1 }
+        }
+        MixingMode::Alternating { stripe_height, angle_degrees } => {
+            let sq = stripe_height.max(1) as f32;
+            let theta = angle_degrees.to_radians();
+            let proj = col as f32 * theta.sin() + row as f32 * theta.cos();
+            (proj / sq).floor().rem_euclid(n as f32) as usize
         }
         MixingMode::Checkerboard { square_size } => {
             let sq = square_size.max(1) as usize;

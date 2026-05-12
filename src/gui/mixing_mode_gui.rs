@@ -6,8 +6,7 @@ pub fn draw_mixing_mode(app: &mut CellularApp, ui: &mut egui::Ui) {
     ui.label("Mixing Mode:");
     ui.horizontal_wrapped(|ui| {
         let is_single = matches!(app.setup.mode, MixingMode::Single);
-        let is_vert = matches!(app.setup.mode, MixingMode::VerticalDivide { .. });
-        let is_horiz = matches!(app.setup.mode, MixingMode::HorizontalDivide { .. });
+        let is_divided = matches!(app.setup.mode, MixingMode::Divided { .. });
         let is_alt = matches!(app.setup.mode, MixingMode::Alternating { .. });
         let is_checkerboard = matches!(app.setup.mode, MixingMode::Checkerboard { .. });
         let is_circle = matches!(app.setup.mode, MixingMode::Circle { .. });
@@ -21,25 +20,17 @@ pub fn draw_mixing_mode(app: &mut CellularApp, ui: &mut egui::Ui) {
             app.clear_highlight();
             app.restart_same_rule();
         }
-        if ui.selectable_label(is_vert, "Vertical").clicked() && !is_vert {
+        if ui.selectable_label(is_divided, "Divided").clicked() && !is_divided {
             if app.setup.rules.len() < 2 { app.push_random_slot(); }
             app.setup.rules.truncate(2);
-            app.setup.mode = MixingMode::VerticalDivide { fraction: 0.5 };
-            app.sync_texts();
-            app.clear_highlight();
-            app.restart_same_rule();
-        }
-        if ui.selectable_label(is_horiz, "Horizontal").clicked() && !is_horiz {
-            if app.setup.rules.len() < 2 { app.push_random_slot(); }
-            app.setup.rules.truncate(2);
-            app.setup.mode = MixingMode::HorizontalDivide { fraction: 0.5 };
+            app.setup.mode = MixingMode::Divided { fraction: 0.5, angle_degrees: 0.0 };
             app.sync_texts();
             app.clear_highlight();
             app.restart_same_rule();
         }
         if ui.selectable_label(is_alt, "Alternating").clicked() && !is_alt {
             if app.setup.rules.len() < 2 { app.push_random_slot(); }
-            app.setup.mode = MixingMode::Alternating { stripe_height: 20, vertical: false };
+            app.setup.mode = MixingMode::Alternating { stripe_height: 20, angle_degrees: 0.0 };
             app.sync_texts();
             app.clear_highlight();
             app.restart_same_rule();
@@ -75,38 +66,58 @@ pub fn draw_mixing_mode(app: &mut CellularApp, ui: &mut egui::Ui) {
     let mode_snapshot = app.setup.mode.clone();
     let mut new_mode: Option<MixingMode> = None;
     match mode_snapshot {
-        MixingMode::VerticalDivide { mut fraction } => {
+        MixingMode::Divided { mut fraction, mut angle_degrees } => {
             ui.horizontal(|ui| {
-                ui.label("Left fraction:");
+                ui.label("Fraction:");
                 let resp = ui.add(egui::Slider::new(&mut fraction, 0.0f32..=1.0).fixed_decimals(2));
                 if resp.drag_stopped() || resp.lost_focus() {
-                    new_mode = Some(MixingMode::VerticalDivide { fraction });
+                    new_mode = Some(MixingMode::Divided { fraction, angle_degrees });
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Angle:");
+                let resp = ui.add(egui::DragValue::new(&mut angle_degrees).suffix("°").fixed_decimals(0));
+                if resp.changed() {
+                    app.setup.mode = MixingMode::Divided { fraction, angle_degrees };
+                }
+                if resp.drag_stopped() || resp.lost_focus() {
+                    new_mode = Some(MixingMode::Divided { fraction, angle_degrees });
+                }
+                for preset in [0.0_f32, 90.0, 45.0, 135.0] {
+                    if ui.button(format!("{}°", preset as i32)).clicked() {
+                        angle_degrees = preset;
+                        new_mode = Some(MixingMode::Divided { fraction, angle_degrees });
+                    }
                 }
             });
         }
-        MixingMode::HorizontalDivide { mut fraction } => {
-            ui.horizontal(|ui| {
-                ui.label("Top fraction:");
-                let resp = ui.add(egui::Slider::new(&mut fraction, 0.0f32..=1.0).fixed_decimals(2));
-                if resp.drag_stopped() || resp.lost_focus() {
-                    new_mode = Some(MixingMode::HorizontalDivide { fraction });
-                }
-            });
-        }
-        MixingMode::Alternating { mut stripe_height, mut vertical } => {
+        MixingMode::Alternating { mut stripe_height, mut angle_degrees } => {
             ui.horizontal(|ui| {
                 ui.label("Stripe size:");
                 let resp = ui.add(egui::DragValue::new(&mut stripe_height).suffix(" rows").range(1u32..=u32::MAX));
                 if resp.changed() {
-                    app.setup.mode = MixingMode::Alternating { stripe_height, vertical };
+                    app.setup.mode = MixingMode::Alternating { stripe_height, angle_degrees };
                 }
                 if resp.drag_stopped() || resp.lost_focus() {
-                    new_mode = Some(MixingMode::Alternating { stripe_height, vertical });
+                    new_mode = Some(MixingMode::Alternating { stripe_height, angle_degrees });
                 }
             });
-            if ui.checkbox(&mut vertical, "Vertical").changed() {
-                new_mode = Some(MixingMode::Alternating { stripe_height, vertical });
-            }
+            ui.horizontal(|ui| {
+                ui.label("Angle:");
+                let resp = ui.add(egui::DragValue::new(&mut angle_degrees).suffix("°").fixed_decimals(0));
+                if resp.changed() {
+                    app.setup.mode = MixingMode::Alternating { stripe_height, angle_degrees };
+                }
+                if resp.drag_stopped() || resp.lost_focus() {
+                    new_mode = Some(MixingMode::Alternating { stripe_height, angle_degrees });
+                }
+                for preset in [0.0_f32, 90.0, 45.0, 135.0] {
+                    if ui.button(format!("{}°", preset as i32)).clicked() {
+                        angle_degrees = preset;
+                        new_mode = Some(MixingMode::Alternating { stripe_height, angle_degrees });
+                    }
+                }
+            });
         }
         MixingMode::Checkerboard { mut square_size } => {
             ui.horizontal(|ui| {
