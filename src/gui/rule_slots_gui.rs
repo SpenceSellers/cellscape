@@ -1,8 +1,7 @@
 use eframe::egui;
 use crate::glance_view::{enter_saved_rules_view, Screen};
-use crate::palette::build_palette;
 use crate::rule_meta::draw_rule_meta_params;
-use crate::simulation::{params_to_json, parse_params_json, persist_saved_rules};
+use crate::simulation::{params_to_json, persist_saved_rules};
 use super::CellularApp;
 
 struct SlotChange {
@@ -18,7 +17,6 @@ enum SlotChangeKind {
     LoadFromSaved,
     SaveRule,
     EditThis,
-    ParseJson(String),
     RemoveSlot,
 }
 
@@ -54,16 +52,6 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
             if meta_resp.noise_changed && pending.is_none() {
                 *pending = Some(SlotChange { slot, kind: SlotChangeKind::Noise(noise) });
             }
-
-            ui.horizontal(|ui| {
-                ui.label("Rule JSON:");
-                let text = &mut app.slot_texts[slot];
-                let resp = ui.add(egui::TextEdit::singleline(text).desired_width(180.0));
-                if resp.lost_focus() && pending.is_none() {
-                    let captured = text.clone();
-                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::ParseJson(captured) });
-                }
-            });
 
             ui.horizontal(|ui| {
                 if ui.button("Save Rule").clicked() && pending.is_none() {
@@ -146,17 +134,6 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
             SlotChangeKind::EditThis => {
                 app.editor_active_rule = slot;
                 app.show_rule_editor = true;
-            }
-            SlotChangeKind::ParseJson(text) => {
-                if let Some(parsed) = parse_params_json(&text) {
-                    app.setup.rules[slot] = parsed;
-                    app.state_palette = build_palette(app.selected_palette, app.setup.max_num_states());
-                    app.sync_texts();
-                    app.clear_highlight();
-                    app.restart_same_rule();
-                } else {
-                    app.slot_texts[slot] = params_to_json(&app.setup.rules[slot]);
-                }
             }
         }
     }

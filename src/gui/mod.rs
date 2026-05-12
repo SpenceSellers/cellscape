@@ -527,26 +527,6 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
     rule_slots_gui::draw_rule_slots(app, ui);
     ui.separator();
 
-    // ── Setup JSON (global) ──
-    ui.horizontal(|ui| {
-        ui.label("Setup JSON:");
-        let resp = ui.add(egui::TextEdit::singleline(&mut app.setup_text).desired_width(220.0));
-        if resp.lost_focus() {
-            let text = app.setup_text.clone();
-            if let Some(parsed) = parse_setup_json(&text) {
-                app.state_palette = build_palette(app.selected_palette, parsed.max_num_states());
-                app.seed_text = parsed.rules[0].seed.to_string();
-                app.editor_active_rule = app.editor_active_rule.min(parsed.rules.len() - 1);
-                app.setup = parsed;
-                app.sync_texts();
-                app.clear_highlight();
-                app.restart_same_rule();
-            } else {
-                app.setup_text = setup_to_json_display(&app.setup);
-            }
-        }
-    });
-
     ui.label(format!("{}/{} rows   zoom: {:.2}x", app.rows_done, app.sim_height, app.zoom));
 
     ui.separator();
