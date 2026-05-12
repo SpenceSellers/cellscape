@@ -115,6 +115,21 @@ pub enum MixingMode {
     },
 }
 
+impl MixingMode {
+    pub fn slot_label(&self, slot: usize) -> String {
+        match (self, slot) {
+            (MixingMode::VerticalDivide { .. }, 0) => "Top Rule".to_string(),
+            (MixingMode::VerticalDivide { .. }, _) => "Bottom Rule".to_string(),
+            (MixingMode::HorizontalDivide { .. }, 0) => "Left Rule".to_string(),
+            (MixingMode::HorizontalDivide { .. }, _) => "Right Rule".to_string(),
+            (MixingMode::Circle { .. }, 0) => "Inside Circle".to_string(),
+            (MixingMode::Circle { .. }, _) => "Outside Circle".to_string(),
+            (_, 0) => "Rule A".to_string(),
+            _ => format!("Rule {}", (b'A' + slot as u8) as char),
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SimSetup {
     #[serde(rename = "m")]

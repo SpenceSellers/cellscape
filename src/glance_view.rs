@@ -16,6 +16,7 @@ pub enum Screen {
 pub enum GlanceAction {
     None,
     SelectRule(SimParameters),
+    DeleteRule(usize),
     Back,
 }
 
@@ -24,6 +25,7 @@ struct GlanceEntry {
     pixels: Vec<u8>,
     texture: Option<egui::TextureHandle>,
     dirty: bool,
+    name: String,
 }
 
 pub struct GalleryState {
@@ -34,6 +36,8 @@ pub struct GalleryState {
     cols: usize,
     title: &'static str,
     allow_reroll: bool,
+    show_delete: bool,
+    delete_confirm_idx: Option<usize>,
     num_states: usize,
     half_width: usize,
     pub noise: f64,
@@ -51,6 +55,8 @@ impl GalleryState {
             cols: 8,
             title: "Glance View",
             allow_reroll: true,
+            show_delete: false,
+            delete_confirm_idx: None,
             num_states: 2,
             half_width: 3,
             noise: 0.0,
@@ -68,6 +74,8 @@ impl GalleryState {
             cols: 8,
             title: "Adjacent Rules",
             allow_reroll: false,
+            show_delete: false,
+            delete_confirm_idx: None,
             num_states: 2,
             half_width: 3,
             noise: 0.0,
@@ -85,6 +93,8 @@ impl GalleryState {
             cols: 8,
             title: "Saved Rules",
             allow_reroll: false,
+            show_delete: true,
+            delete_confirm_idx: None,
             num_states: 2,
             half_width: 3,
             noise: 0.0,
@@ -119,11 +129,11 @@ pub fn enter_glance_view(state: &mut GalleryState, num_states: usize, half_width
     state.half_width = half_width;
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
-    for _ in 0..50 {
+    for i in 0..50 {
         let rule = random_rule(num_states, half_width, &mut rand::rng());
         let params = SimParameters { rule, noise: state.noise, seed: rand::rng().random::<u64>() };
         let pixels = compute_sim(&params, size, size, state.prerun_size);
-        state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false });
+        state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false, name: i.to_string() });
     }
 }
 
@@ -139,16 +149,17 @@ pub fn enter_adjacent_view(state: &mut GalleryState, base: &SimParameters) {
             (params.rule.lookup[entry_idx].static_value().unwrap_or(0) + 1) % base.rule.num_states as u8,
         );
         let pixels = compute_sim(&params, size, size, state.prerun_size);
-        state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false });
+        state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false, name: entry_idx.to_string() });
     }
 }
 
 pub fn enter_saved_rules_view(state: &mut GalleryState, saved: &[SimParameters]) {
+    state.delete_confirm_idx = None;
     let size = state.sim_size * state.render_scale as usize;
     state.entries.clear();
-    for params in saved {
+    for (i, params) in saved.iter().enumerate() {
         let pixels = compute_sim(params, size, size, state.prerun_size);
-        state.entries.push(GlanceEntry { params: params.clone(), pixels, texture: None, dirty: false });
+        state.entries.push(GlanceEntry { params: params.clone(), pixels, texture: None, dirty: false, name: i.to_string() });
     }
 }
 
@@ -238,6 +249,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
         let gap = 8.0;
 
         let mut clicked_idx: Option<usize> = None;
+        let mut delete_clicked_idx: Option<usize> = None;
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             let avail_width = ui.available_width();
@@ -247,46 +259,94 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
             for (row_idx, chunk) in state.entries.chunks(cols).enumerate() {
                 ui.horizontal(|ui| {
                     for (j, entry) in chunk.iter().enumerate() {
-                        let resp = ui.allocate_response(
-                            egui::vec2(thumb_size, thumb_size),
-                            egui::Sense::click(),
-                        );
-                        let rect = resp.rect;
-                        let hover_scale = if resp.hovered() { 1.06 } else { 1.0 };
-                        let display_rect = egui::Rect::from_center_size(
-                            rect.center(),
-                            rect.size() * hover_scale,
-                        );
-                        let painter = ui.painter_at(display_rect);
-                        if let Some(tex) = &entry.texture {
-                            let uv = egui::Rect::from_min_max(
-                                egui::pos2(0.0, 0.0),
-                                egui::pos2(1.0, 1.0),
+                        let idx = row_idx * cols + j;
+                        ui.vertical(|ui| {
+                            ui.set_max_width(thumb_size);
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            let resp = ui.allocate_response(
+                                egui::vec2(thumb_size, thumb_size),
+                                egui::Sense::click(),
                             );
-                            painter.image(tex.id(), display_rect, uv, egui::Color32::WHITE);
-                        }
-                        let border_color = if resp.hovered() {
-                            egui::Color32::WHITE
-                        } else {
-                            egui::Color32::from_gray(100)
-                        };
-                        painter.rect_stroke(
-                            display_rect,
-                            1.0,
-                            egui::Stroke::new(2.0, border_color),
-                        );
-                        if resp.clicked() {
-                            clicked_idx = Some(row_idx * cols + j);
-                        }
+                            let rect = resp.rect;
+                            let hover_scale = if resp.hovered() { 1.06 } else { 1.0 };
+                            let display_rect = egui::Rect::from_center_size(
+                                rect.center(),
+                                rect.size() * hover_scale,
+                            );
+                            let painter = ui.painter_at(display_rect);
+                            if let Some(tex) = &entry.texture {
+                                let uv = egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                );
+                                painter.image(tex.id(), display_rect, uv, egui::Color32::WHITE);
+                            }
+                            let border_color = if resp.hovered() {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::from_gray(100)
+                            };
+                            painter.rect_stroke(
+                                display_rect,
+                                1.0,
+                                egui::Stroke::new(2.0, border_color),
+                            );
+                            if resp.clicked() {
+                                clicked_idx = Some(idx);
+                            }
+
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(&entry.name).size(15.0));
+                                if state.show_delete {
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.button(egui::RichText::new("×").size(15.0)).clicked() {
+                                            delete_clicked_idx = Some(idx);
+                                        }
+                                    });
+                                }
+                            });
+                        });
                     }
                 });
             }
         });
 
+        if let Some(idx) = delete_clicked_idx {
+            state.delete_confirm_idx = Some(idx);
+        }
+
         if let Some(idx) = clicked_idx {
             action = GlanceAction::SelectRule(state.entries[idx].params.clone());
         }
     });
+
+    if let Some(idx) = state.delete_confirm_idx {
+        let mut confirmed = false;
+        let mut cancelled = false;
+        egui::Window::new("Delete Rule?")
+            .id(egui::Id::new("delete_confirm_modal"))
+            .resizable(false)
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!("Delete saved rule {}?", idx));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Delete").clicked() {
+                        confirmed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancelled = true;
+                    }
+                });
+            });
+        if confirmed {
+            action = GlanceAction::DeleteRule(idx);
+            state.delete_confirm_idx = None;
+        } else if cancelled {
+            state.delete_confirm_idx = None;
+        }
+    }
 
     action
 }

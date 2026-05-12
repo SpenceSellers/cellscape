@@ -343,6 +343,13 @@ impl eframe::App for CellularApp {
                     self.current_screen = Screen::Main;
                     self.saved_rules_slot = None;
                 }
+                GlanceAction::DeleteRule(idx) => {
+                    if idx < self.saved_rules.len() {
+                        self.saved_rules.remove(idx);
+                        persist_saved_rules(&self.saved_rules);
+                        enter_saved_rules_view(&mut self.saved_rules_state, &self.saved_rules);
+                    }
+                }
                 GlanceAction::Back => {
                     self.current_screen = Screen::Main;
                     self.saved_rules_slot = None;
@@ -698,7 +705,7 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
         }
 
         let label = if multi {
-            if slot == 0 { "Rule A".to_string() } else { format!("Rule {}", (b'A' + slot as u8) as char) }
+            app.setup.mode.slot_label(slot)
         } else {
             String::new()
         };
