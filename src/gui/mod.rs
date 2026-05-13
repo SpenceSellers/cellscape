@@ -8,8 +8,8 @@ use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_editor::{self, RandomEditor};
 use crate::rule_meta::max_num_states;
 use crate::simulation::{
-    SimBatch, MixingMode, SimSetup, SimParameters,
-    noise_from_slider, parse_seed, params_to_json,
+    SimBatch, MixingMode, SimSetup, SimParameters, DEFAULT_NOISE,
+    parse_seed, params_to_json,
     setup_to_json_display, parse_setup_json, random_rule, cell_rule_index,
     load_saved_rules, persist_saved_rules,
 };
@@ -106,7 +106,7 @@ impl CellularApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, sim_width: usize, sim_height: usize, initial_rule: Option<&str>) -> Self {
         let default_params = SimParameters {
             rule: random_rule(2, 3, &mut rand::rng()),
-            noise: noise_from_slider(0.5),
+            noise: DEFAULT_NOISE,
             seed: rand::rng().random::<u64>(),
         };
         let mut setup = SimSetup::single(default_params);

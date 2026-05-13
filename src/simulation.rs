@@ -168,6 +168,8 @@ pub fn apply_noise(arena: &mut [u8], noise: f64, num_states: usize, rng: &mut Sm
     }
 }
 
+pub const DEFAULT_NOISE: f64 = 1e-4;
+
 pub fn noise_from_slider(s: f64) -> f64 {
     if s <= 0.0 { 0.0 } else { 10f64.powf(s * 6.0 - 7.0) }
 }

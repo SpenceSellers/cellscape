@@ -3,7 +3,7 @@ use rand::Rng;
 
 use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_meta::draw_rule_meta_params;
-use crate::simulation::{compute_sim, random_rule, rule_string_from_lookup, CellSource, SimParameters};
+use crate::simulation::{compute_sim, random_rule, rule_string_from_lookup, CellSource, SimParameters, DEFAULT_NOISE};
 
 #[derive(PartialEq)]
 pub enum Screen {
@@ -59,7 +59,7 @@ impl GalleryState {
             delete_confirm_idx: None,
             num_states: 2,
             half_width: 3,
-            noise: 0.0,
+            noise: DEFAULT_NOISE,
             selected_palette: ColorPalette::Classic,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
         }
@@ -78,7 +78,7 @@ impl GalleryState {
             delete_confirm_idx: None,
             num_states: 2,
             half_width: 3,
-            noise: 0.0,
+            noise: DEFAULT_NOISE,
             selected_palette: ColorPalette::Classic,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
         }
@@ -97,7 +97,7 @@ impl GalleryState {
             delete_confirm_idx: None,
             num_states: 2,
             half_width: 3,
-            noise: 0.0,
+            noise: DEFAULT_NOISE,
             selected_palette: ColorPalette::Classic,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
         }
