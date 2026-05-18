@@ -353,6 +353,30 @@ pub fn compute_sim(
     result
 }
 
+pub fn compute_sim_setup(
+    setup: &SimSetup,
+    sim_width: usize,
+    sim_height: usize,
+    prerun: usize,
+) -> Vec<u8> {
+    let seed = setup.rules[0].seed;
+    let num_states = setup.rules[0].rule.num_states;
+    let mut current = build_arena(sim_width, &all_states(num_states), seed);
+    let mut noise_rng = SmallRng::seed_from_u64(seed ^ 0x9e3779b97f4a7c15);
+    let mut next = vec![0u8; sim_width];
+    let mut result = Vec::with_capacity(sim_width * sim_height);
+    result.extend_from_slice(&current);
+    for i in 1..(sim_height + prerun) {
+        apply_noise_multi(&mut current, i - 1, setup, sim_height, &mut noise_rng);
+        apply_step_multi(&current, i, setup, sim_height, &mut next, &mut noise_rng);
+        std::mem::swap(&mut current, &mut next);
+        if i > prerun {
+            result.extend_from_slice(&current);
+        }
+    }
+    result
+}
+
 pub fn random_rule(num_states: usize, half_width: usize, rng: &mut impl Rng) -> Rule {
     let width = 2 * half_width + 1;
     let lookup = (0..num_states.pow(width as u32))

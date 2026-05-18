@@ -94,9 +94,12 @@ pub struct CellularApp {
     pub adjacent_state: GalleryState,
     pub saved_rules: Vec<SimParameters>,
     pub saved_rules_state: GalleryState,
+    pub mixed_adjacent_state: GalleryState,
+    pub mixed_glance_state: GalleryState,
+    pub mode_explore_state: GalleryState,
     pub random_editor: Option<RandomEditor>,
 
-    // Which slot "Load from Saved" was triggered from (None = replace whole setup)
+    // Which slot the gallery action should apply to (None = replace whole setup)
     pub saved_rules_slot: Option<usize>,
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -170,6 +173,9 @@ impl CellularApp {
             adjacent_state: GalleryState::new_adjacent(),
             saved_rules: load_saved_rules(),
             saved_rules_state: GalleryState::new_saved(),
+            mixed_adjacent_state: GalleryState::new_mixed_adjacent(),
+            mixed_glance_state: GalleryState::new_mixed_glance(),
+            mode_explore_state: GalleryState::new_mode_explore(),
             random_editor: None,
             saved_rules_slot: None,
 
@@ -334,20 +340,21 @@ impl eframe::App for CellularApp {
             let action = match self.current_screen {
                 Screen::Glance => draw_gallery(&mut self.glance_state, ctx),
                 Screen::Adjacent => draw_gallery(&mut self.adjacent_state, ctx),
+                Screen::MixedAdjacent => draw_gallery(&mut self.mixed_adjacent_state, ctx),
+                Screen::MixedGlance => draw_gallery(&mut self.mixed_glance_state, ctx),
+                Screen::ModeExplore => draw_gallery(&mut self.mode_explore_state, ctx),
                 Screen::SavedRules => draw_gallery(&mut self.saved_rules_state, ctx),
                 Screen::Main => unreachable!(),
             };
             match action {
-                GlanceAction::SelectRule(params) => {
+                GlanceAction::SelectSetup(setup) => {
                     if let Some(slot) = self.saved_rules_slot {
-                        // Load into a specific slot
-                        self.setup.rules[slot] = params;
+                        self.setup.rules[slot] = setup.rules[slot].clone();
                         self.state_palette = build_palette(self.selected_palette, self.setup.max_num_states());
                     } else {
-                        // Replace entire setup
-                        self.state_palette = build_palette(self.selected_palette, params.rule.num_states);
-                        self.seed_text = params.seed.to_string();
-                        self.setup = SimSetup::single(params);
+                        self.state_palette = build_palette(self.selected_palette, setup.max_num_states());
+                        self.seed_text = setup.rules[0].seed.to_string();
+                        self.setup = setup;
                         self.editor_active_rule = 0;
                     }
                     self.sync_texts();
@@ -360,7 +367,7 @@ impl eframe::App for CellularApp {
                     if idx < self.saved_rules.len() {
                         self.saved_rules.remove(idx);
                         persist_saved_rules(&self.saved_rules);
-                        enter_saved_rules_view(&mut self.saved_rules_state, &self.saved_rules);
+                        enter_saved_rules_view(&mut self.saved_rules_state, &self.saved_rules, None);
                     }
                 }
                 GlanceAction::Back => {
@@ -580,7 +587,7 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
         app.saved_rules_slot = None;
         app.saved_rules_state.selected_palette = app.selected_palette;
         app.saved_rules_state.set_palette(app.state_palette.clone());
-        enter_saved_rules_view(&mut app.saved_rules_state, &app.saved_rules);
+        enter_saved_rules_view(&mut app.saved_rules_state, &app.saved_rules, None);
         app.current_screen = Screen::SavedRules;
     }
 

@@ -3,25 +3,28 @@ use rand::Rng;
 
 use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_meta::draw_rule_meta_params;
-use crate::simulation::{compute_sim, random_rule, rule_string_from_lookup, CellSource, SimParameters, DEFAULT_NOISE};
+use crate::simulation::{compute_sim_setup, random_rule, rule_string_from_lookup, CellSource, MixingMode, SimParameters, SimSetup, DEFAULT_NOISE};
 
 #[derive(PartialEq)]
 pub enum Screen {
     Main,
     Glance,
     Adjacent,
+    MixedAdjacent,
+    MixedGlance,
+    ModeExplore,
     SavedRules,
 }
 
 pub enum GlanceAction {
     None,
-    SelectRule(SimParameters),
+    SelectSetup(SimSetup),
     DeleteRule(usize),
     Back,
 }
 
 struct GlanceEntry {
-    params: SimParameters,
+    setup: SimSetup,
     pixels: Vec<u8>,
     texture: Option<egui::TextureHandle>,
     dirty: bool,
@@ -43,6 +46,7 @@ pub struct GalleryState {
     pub noise: f64,
     pub selected_palette: ColorPalette,
     pub palette: Vec<egui::Color32>,
+    reroll_setup: Option<(SimSetup, usize)>,
 }
 
 impl GalleryState {
@@ -62,6 +66,7 @@ impl GalleryState {
             noise: DEFAULT_NOISE,
             selected_palette: ColorPalette::Classic,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
+            reroll_setup: None,
         }
     }
 
@@ -81,6 +86,7 @@ impl GalleryState {
             noise: DEFAULT_NOISE,
             selected_palette: ColorPalette::Classic,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
+            reroll_setup: None,
         }
     }
 
@@ -100,6 +106,67 @@ impl GalleryState {
             noise: DEFAULT_NOISE,
             selected_palette: ColorPalette::Classic,
             palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
+            reroll_setup: None,
+        }
+    }
+
+    pub fn new_mixed_adjacent() -> Self {
+        GalleryState {
+            entries: Vec::new(),
+            sim_size: 80,
+            prerun_size: 80,
+            render_scale: 2,
+            cols: 8,
+            title: "Adjacent (Mixed Mode)",
+            allow_reroll: false,
+            show_delete: false,
+            delete_confirm_idx: None,
+            num_states: 2,
+            half_width: 3,
+            noise: DEFAULT_NOISE,
+            selected_palette: ColorPalette::Classic,
+            palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
+            reroll_setup: None,
+        }
+    }
+
+    pub fn new_mixed_glance() -> Self {
+        GalleryState {
+            entries: Vec::new(),
+            sim_size: 80,
+            prerun_size: 80,
+            render_scale: 2,
+            cols: 8,
+            title: "Random (Mixed Mode)",
+            allow_reroll: true,
+            show_delete: false,
+            delete_confirm_idx: None,
+            num_states: 2,
+            half_width: 3,
+            noise: DEFAULT_NOISE,
+            selected_palette: ColorPalette::Classic,
+            palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
+            reroll_setup: None,
+        }
+    }
+
+    pub fn new_mode_explore() -> Self {
+        GalleryState {
+            entries: Vec::new(),
+            sim_size: 80,
+            prerun_size: 80,
+            render_scale: 2,
+            cols: 6,
+            title: "Explore Mode Parameters",
+            allow_reroll: false,
+            show_delete: false,
+            delete_confirm_idx: None,
+            num_states: 2,
+            half_width: 3,
+            noise: DEFAULT_NOISE,
+            selected_palette: ColorPalette::Classic,
+            palette: vec![egui::Color32::BLACK, egui::Color32::WHITE],
+            reroll_setup: None,
         }
     }
 
@@ -115,17 +182,21 @@ impl GalleryState {
     }
 }
 
+fn push_entry(state: &mut GalleryState, setup: SimSetup, name: String) {
+    let size = state.sim_size * state.render_scale as usize;
+    let pixels = compute_sim_setup(&setup, size, size, state.prerun_size);
+    state.entries.push(GlanceEntry { setup, pixels, texture: None, dirty: false, name });
+}
 
 pub fn enter_glance_view(state: &mut GalleryState, num_states: usize, half_width: usize) {
     state.num_states = num_states;
     state.half_width = half_width;
-    let size = state.sim_size * state.render_scale as usize;
+    state.reroll_setup = None;
     state.entries.clear();
     for i in 0..50 {
         let rule = random_rule(num_states, half_width, &mut rand::rng());
         let params = SimParameters { rule, noise: state.noise, seed: rand::rng().random::<u64>() };
-        let pixels = compute_sim(&params, size, size, state.prerun_size);
-        state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false, name: i.to_string() });
+        push_entry(state, SimSetup::single(params), i.to_string());
     }
 }
 
@@ -133,25 +204,109 @@ pub fn enter_adjacent_view(state: &mut GalleryState, base: &SimParameters) {
     state.num_states = base.rule.num_states;
     state.half_width = base.rule.half_width;
     state.noise = base.noise;
-    let size = state.sim_size * state.render_scale as usize;
+    state.reroll_setup = None;
     state.entries.clear();
     for entry_idx in 0..base.rule.lookup.len() {
         let mut params = base.clone();
         params.rule.lookup[entry_idx] = CellSource::Static(
             (params.rule.lookup[entry_idx].static_value().unwrap_or(0) + 1) % base.rule.num_states as u8,
         );
-        let pixels = compute_sim(&params, size, size, state.prerun_size);
-        state.entries.push(GlanceEntry { params, pixels, texture: None, dirty: false, name: entry_idx.to_string() });
+        push_entry(state, SimSetup::single(params), entry_idx.to_string());
     }
 }
 
-pub fn enter_saved_rules_view(state: &mut GalleryState, saved: &[SimParameters]) {
+pub fn enter_saved_rules_view(
+    state: &mut GalleryState,
+    saved: &[SimParameters],
+    slot_context: Option<(&SimSetup, usize)>,
+) {
     state.delete_confirm_idx = None;
-    let size = state.sim_size * state.render_scale as usize;
+    state.reroll_setup = None;
     state.entries.clear();
     for (i, params) in saved.iter().enumerate() {
-        let pixels = compute_sim(params, size, size, state.prerun_size);
-        state.entries.push(GlanceEntry { params: params.clone(), pixels, texture: None, dirty: false, name: i.to_string() });
+        let setup = match slot_context {
+            Some((base, slot)) => {
+                let mut s = base.clone();
+                s.rules[slot] = params.clone();
+                s
+            }
+            None => SimSetup::single(params.clone()),
+        };
+        push_entry(state, setup, i.to_string());
+    }
+}
+
+pub fn enter_mixed_adjacent_view(state: &mut GalleryState, base_setup: &SimSetup, slot: usize) {
+    let base = &base_setup.rules[slot];
+    state.num_states = base.rule.num_states;
+    state.half_width = base.rule.half_width;
+    state.noise = base.noise;
+    state.reroll_setup = None;
+    state.entries.clear();
+    for entry_idx in 0..base.rule.lookup.len() {
+        let mut setup = base_setup.clone();
+        setup.rules[slot].rule.lookup[entry_idx] = CellSource::Static(
+            (setup.rules[slot].rule.lookup[entry_idx].static_value().unwrap_or(0) + 1)
+                % base.rule.num_states as u8,
+        );
+        push_entry(state, setup, entry_idx.to_string());
+    }
+}
+
+pub fn enter_mixed_glance_view(state: &mut GalleryState, base_setup: &SimSetup, slot: usize) {
+    let base = &base_setup.rules[slot];
+    state.num_states = base.rule.num_states;
+    state.half_width = base.rule.half_width;
+    state.noise = base.noise;
+    state.reroll_setup = Some((base_setup.clone(), slot));
+    state.entries.clear();
+    for i in 0..50 {
+        let rule = random_rule(base.rule.num_states, base.rule.half_width, &mut rand::rng());
+        let mut setup = base_setup.clone();
+        setup.rules[slot].rule = rule;
+        push_entry(state, setup, i.to_string());
+    }
+}
+
+pub fn enter_mode_explore_view(state: &mut GalleryState, base_setup: &SimSetup) {
+    state.num_states = base_setup.max_num_states();
+    state.reroll_setup = None;
+    state.entries.clear();
+
+    match &base_setup.mode {
+        MixingMode::Alternating { .. } => {
+            for &h in &[2u32, 4, 8, 16, 32, 64] {
+                for &a in &[0.0f32, 30.0, 60.0, 90.0, 120.0, 150.0] {
+                    let mut s = base_setup.clone();
+                    s.mode = MixingMode::Alternating { stripe_height: h, angle_degrees: a };
+                    push_entry(state, s, format!("h={} a={:.0}°", h, a));
+                }
+            }
+        }
+        MixingMode::Divided { .. } => {
+            for &f in &[0.2f32, 0.33, 0.5, 0.67, 0.8] {
+                for &a in &[0.0f32, 30.0, 60.0, 90.0, 120.0, 150.0] {
+                    let mut s = base_setup.clone();
+                    s.mode = MixingMode::Divided { fraction: f, angle_degrees: a };
+                    push_entry(state, s, format!("f={:.0}% a={:.0}°", f * 100.0, a));
+                }
+            }
+        }
+        MixingMode::Checkerboard { .. } => {
+            for &sq in &[1u32, 2, 4, 8, 16, 32, 64, 128] {
+                let mut s = base_setup.clone();
+                s.mode = MixingMode::Checkerboard { square_size: sq };
+                push_entry(state, s, format!("size={}", sq));
+            }
+        }
+        MixingMode::Circle { .. } => {
+            for &r in &[0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] {
+                let mut s = base_setup.clone();
+                s.mode = MixingMode::Circle { radius_pct: r };
+                push_entry(state, s, format!("r={:.0}%", r * 100.0));
+            }
+        }
+        _ => {}
     }
 }
 
@@ -161,12 +316,16 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
     for entry in &mut state.entries {
         let tex_size = entry.pixels.len().isqrt();
         if tex_size != expected_size || entry.texture.is_none() || entry.dirty {
-            entry.pixels = compute_sim(&entry.params, expected_size, expected_size, state.prerun_size);
+            entry.pixels = compute_sim_setup(&entry.setup, expected_size, expected_size, state.prerun_size);
             entry.dirty = false;
             entry.texture = None;
         }
         if entry.texture.is_none() {
-            let tex_name = format!("gallery_{}_{}", rule_string_from_lookup(&entry.params.rule), entry.params.seed);
+            let tex_name = format!(
+                "gallery_{}_{}_{}", entry.name,
+                rule_string_from_lookup(&entry.setup.rules[0].rule),
+                entry.setup.rules[0].seed,
+            );
             entry.texture = Some(crate::texture::make_sim_texture(
                 ctx, &tex_name, &entry.pixels, expected_size, expected_size, &state.palette,
             ));
@@ -181,7 +340,11 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
             && (ui.button("Re-roll (E)").clicked()
                 || ui.input(|i| i.key_pressed(egui::Key::E)))
         {
-            enter_glance_view(state, state.num_states, state.half_width);
+            if let Some((setup, slot)) = state.reroll_setup.clone() {
+                enter_mixed_glance_view(state, &setup, slot);
+            } else {
+                enter_glance_view(state, state.num_states, state.half_width);
+            }
         }
         if ui.button("Back to Main").clicked() {
             action = GlanceAction::Back;
@@ -195,13 +358,24 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
         let meta_resp = draw_rule_meta_params(ui, &mut num_states, &mut half_width, &mut noise, state.allow_reroll);
         if (meta_resp.num_states_changed || meta_resp.half_width_changed) && state.allow_reroll {
             state.noise = noise;
-            enter_glance_view(state, num_states, half_width);
+            if let Some((setup, slot)) = state.reroll_setup.clone() {
+                enter_mixed_glance_view(state, &setup, slot);
+            } else {
+                enter_glance_view(state, num_states, half_width);
+            }
             state.palette = build_palette(state.selected_palette, state.num_states);
         }
         if meta_resp.noise_changed {
             state.noise = noise;
+            let reroll_slot = state.reroll_setup.as_ref().map(|(_, s)| *s);
             for entry in &mut state.entries {
-                entry.params.noise = noise;
+                if let Some(slot) = reroll_slot {
+                    entry.setup.rules[slot].noise = noise;
+                } else {
+                    for rule in &mut entry.setup.rules {
+                        rule.noise = noise;
+                    }
+                }
                 entry.dirty = true;
             }
         }
@@ -306,7 +480,7 @@ pub fn draw_gallery(state: &mut GalleryState, ctx: &egui::Context) -> GlanceActi
         }
 
         if let Some(idx) = clicked_idx {
-            action = GlanceAction::SelectRule(state.entries[idx].params.clone());
+            action = GlanceAction::SelectSetup(state.entries[idx].setup.clone());
         }
     });
 

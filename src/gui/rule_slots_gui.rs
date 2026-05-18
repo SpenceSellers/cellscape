@@ -1,5 +1,5 @@
 use eframe::egui;
-use crate::glance_view::{enter_saved_rules_view, Screen};
+use crate::glance_view::{enter_mixed_adjacent_view, enter_mixed_glance_view, enter_saved_rules_view, Screen};
 use crate::rule_meta::draw_rule_meta_params;
 use crate::simulation::{compute_sim, params_to_json, persist_saved_rules, rule_string_from_lookup};
 use super::{CellularApp, RuleSlot};
@@ -20,7 +20,8 @@ enum SlotChangeKind {
     NumStates(usize),
     HalfWidth(usize),
     Noise(f64),
-    NewRandom,
+    ExploreRandom,
+    ExploreAdjacent,
     LoadFromSaved,
     SaveRule,
     RemoveSlot,
@@ -87,8 +88,11 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
                 }
             });
             ui.horizontal(|ui| {
-                if ui.button("New random").clicked() && pending.is_none() {
-                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::NewRandom });
+                if ui.button("Explore random").clicked() && pending.is_none() {
+                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::ExploreRandom });
+                }
+                if ui.button("Explore adjacent").clicked() && pending.is_none() {
+                    *pending = Some(SlotChange { slot, kind: SlotChangeKind::ExploreAdjacent });
                 }
             });
         };
@@ -135,7 +139,20 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
                 app.sync_texts();
                 app.restart_same_rule();
             }
-            SlotChangeKind::NewRandom => app.new_rule_for_slot(slot),
+            SlotChangeKind::ExploreRandom => {
+                app.saved_rules_slot = Some(slot);
+                app.mixed_glance_state.selected_palette = app.selected_palette;
+                app.mixed_glance_state.set_palette(app.state_palette.clone());
+                enter_mixed_glance_view(&mut app.mixed_glance_state, &app.setup, slot);
+                app.current_screen = Screen::MixedGlance;
+            }
+            SlotChangeKind::ExploreAdjacent => {
+                app.saved_rules_slot = Some(slot);
+                app.mixed_adjacent_state.selected_palette = app.selected_palette;
+                app.mixed_adjacent_state.set_palette(app.state_palette.clone());
+                enter_mixed_adjacent_view(&mut app.mixed_adjacent_state, &app.setup, slot);
+                app.current_screen = Screen::MixedAdjacent;
+            }
             SlotChangeKind::RemoveSlot => {
                 app.setup.rules.remove(slot);
                 app.editor_active_rule = app.editor_active_rule.min(app.setup.rules.len() - 1);
@@ -151,7 +168,7 @@ pub fn draw_rule_slots(app: &mut CellularApp, ui: &mut egui::Ui) {
                     app.saved_rules_slot = Some(slot);
                     app.saved_rules_state.selected_palette = app.selected_palette;
                     app.saved_rules_state.set_palette(app.state_palette.clone());
-                    enter_saved_rules_view(&mut app.saved_rules_state, &app.saved_rules);
+                    enter_saved_rules_view(&mut app.saved_rules_state, &app.saved_rules, Some((&app.setup, slot)));
                     app.current_screen = Screen::SavedRules;
                 }
             }

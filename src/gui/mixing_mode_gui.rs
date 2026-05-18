@@ -1,4 +1,5 @@
 use eframe::egui;
+use crate::glance_view::{Screen, enter_mode_explore_view};
 use crate::simulation::MixingMode;
 use super::CellularApp;
 
@@ -90,6 +91,12 @@ pub fn draw_mixing_mode(app: &mut CellularApp, ui: &mut egui::Ui) {
                     }
                 }
             });
+            if ui.button("Explore…").clicked() {
+                app.mode_explore_state.selected_palette = app.selected_palette;
+                app.mode_explore_state.set_palette(app.state_palette.clone());
+                enter_mode_explore_view(&mut app.mode_explore_state, &app.setup);
+                app.current_screen = Screen::ModeExplore;
+            }
         }
         MixingMode::Alternating { mut stripe_height, mut angle_degrees } => {
             ui.horizontal(|ui| {
@@ -118,6 +125,12 @@ pub fn draw_mixing_mode(app: &mut CellularApp, ui: &mut egui::Ui) {
                     }
                 }
             });
+            if ui.button("Explore…").clicked() {
+                app.mode_explore_state.selected_palette = app.selected_palette;
+                app.mode_explore_state.set_palette(app.state_palette.clone());
+                enter_mode_explore_view(&mut app.mode_explore_state, &app.setup);
+                app.current_screen = Screen::ModeExplore;
+            }
         }
         MixingMode::Checkerboard { mut square_size } => {
             ui.horizontal(|ui| {
@@ -130,6 +143,12 @@ pub fn draw_mixing_mode(app: &mut CellularApp, ui: &mut egui::Ui) {
                     new_mode = Some(MixingMode::Checkerboard { square_size });
                 }
             });
+            if ui.button("Explore…").clicked() {
+                app.mode_explore_state.selected_palette = app.selected_palette;
+                app.mode_explore_state.set_palette(app.state_palette.clone());
+                enter_mode_explore_view(&mut app.mode_explore_state, &app.setup);
+                app.current_screen = Screen::ModeExplore;
+            }
         }
         MixingMode::Circle { mut radius_pct } => {
             ui.horizontal(|ui| {
@@ -139,6 +158,12 @@ pub fn draw_mixing_mode(app: &mut CellularApp, ui: &mut egui::Ui) {
                     new_mode = Some(MixingMode::Circle { radius_pct });
                 }
             });
+            if ui.button("Explore…").clicked() {
+                app.mode_explore_state.selected_palette = app.selected_palette;
+                app.mode_explore_state.set_palette(app.state_palette.clone());
+                enter_mode_explore_view(&mut app.mode_explore_state, &app.setup);
+                app.current_screen = Screen::ModeExplore;
+            }
         }
         MixingMode::Single => {}
         MixingMode::Masked { mask_data } => {
