@@ -77,6 +77,7 @@ pub struct CellularApp {
     pub state_palette: Vec<egui::Color32>,
     pub selected_palette: ColorPalette,
     pub show_rule_editor: bool,
+    pub sidebar_visible: bool,
     pub seed_text: String,
     pub zoom: f32,
     pub pan: egui::Vec2,
@@ -153,6 +154,7 @@ impl CellularApp {
             state_palette,
             selected_palette: ColorPalette::Classic,
             show_rule_editor: false,
+            sidebar_visible: true,
             zoom: 1.0,
             pan: egui::Vec2::ZERO,
             view_initialized: false,
@@ -398,14 +400,24 @@ impl eframe::App for CellularApp {
             }
         }
 
-        egui::SidePanel::right("controls")
-            .resizable(true)
-            .default_width(260.0)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    draw_sidebar(self, ui);
+        if self.sidebar_visible {
+            egui::SidePanel::right("controls")
+                .resizable(true)
+                .default_width(260.0)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        draw_sidebar(self, ui);
+                    });
                 });
-            });
+        } else {
+            egui::Area::new("sidebar_toggle".into())
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 8.0))
+                .show(ctx, |ui| {
+                    if ui.button("☰").clicked() {
+                        self.sidebar_visible = true;
+                    }
+                });
+        }
 
         if self.show_rule_editor {
             egui::TopBottomPanel::bottom("rule_editor")
@@ -436,7 +448,18 @@ impl eframe::App for CellularApp {
 
             let response = ui.allocate_rect(canvas, egui::Sense::click_and_drag());
 
-            if response.dragged() {
+            let multi_touch = ctx.input(|i| i.multi_touch());
+            if let Some(touch) = multi_touch {
+                self.pan += touch.translation_delta;
+                if touch.zoom_delta != 1.0 {
+                    let cursor = ctx.input(|i| i.pointer.hover_pos()).unwrap_or(canvas.center());
+                    let cursor_local = cursor.to_vec2() - canvas.min.to_vec2();
+                    let new_zoom = (self.zoom * touch.zoom_delta).clamp(0.001, 50.0);
+                    let actual_factor = new_zoom / self.zoom;
+                    self.pan = cursor_local + (self.pan - cursor_local) * actual_factor;
+                    self.zoom = new_zoom;
+                }
+            } else if response.dragged() {
                 self.pan += response.drag_delta();
             }
 
@@ -518,6 +541,14 @@ impl eframe::App for CellularApp {
 }
 
 fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("✕").on_hover_text("Collapse sidebar").clicked() {
+                app.sidebar_visible = false;
+            }
+        });
+    });
+
     mixing_mode_gui::draw_mixing_mode(app, ui);
 
     ui.separator();
