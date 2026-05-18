@@ -139,6 +139,18 @@ pub struct SimSetup {
     pub rules: Vec<SimParameters>,
 }
 
+fn mixed_sizes_sorted(fixed: &[u32], random_count: usize, max: u32) -> Vec<u32> {
+    use std::collections::HashSet;
+    let mut sizes: HashSet<u32> = fixed.iter().copied().collect();
+    let mut rng = rand::rng();
+    for _ in 0..random_count {
+        sizes.insert(rng.random_range(1u32..=max));
+    }
+    let mut v: Vec<u32> = sizes.into_iter().collect();
+    v.sort_unstable();
+    v
+}
+
 impl SimSetup {
     pub fn single(params: SimParameters) -> Self {
         SimSetup { mode: MixingMode::Single, rules: vec![params] }
@@ -158,7 +170,7 @@ impl SimSetup {
             return Vec::new();
         };
         match param {
-            AlternatingParam::StripeHeight => [2u32, 4, 8, 16, 32, 64, 128].iter().map(|&h| {
+            AlternatingParam::StripeHeight => mixed_sizes_sorted(&[2, 4, 8, 16, 32, 64, 128], 20, 128).into_iter().map(|h| {
                 let mut s = self.clone();
                 s.mode = MixingMode::Alternating { stripe_height: h, angle_degrees: cur_a };
                 (s, format!("h={}", h))
@@ -196,7 +208,7 @@ impl SimSetup {
 
     pub fn explore_checkerboard(&self, _param: CheckerboardParam) -> Vec<(SimSetup, String)> {
         if !matches!(self.mode, MixingMode::Checkerboard { .. }) { return Vec::new(); }
-        [1u32, 2, 4, 8, 16, 32, 64, 128].iter().map(|&sq| {
+        mixed_sizes_sorted(&[1, 2, 4, 8, 16, 32, 64, 128], 20, 128).into_iter().map(|sq| {
             let mut s = self.clone();
             s.mode = MixingMode::Checkerboard { square_size: sq };
             (s, format!("size={}", sq))
