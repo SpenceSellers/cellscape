@@ -150,7 +150,74 @@ impl SimSetup {
     pub fn max_num_states(&self) -> usize {
         self.rules.iter().map(|r| r.rule.num_states).max().unwrap_or(2)
     }
+
+    pub fn explore_alternating(&self, param: AlternatingParam) -> Vec<(SimSetup, String)> {
+        let (cur_h, cur_a) = if let MixingMode::Alternating { stripe_height, angle_degrees } = self.mode {
+            (stripe_height, angle_degrees)
+        } else {
+            return Vec::new();
+        };
+        match param {
+            AlternatingParam::StripeHeight => [2u32, 4, 8, 16, 32, 64, 128].iter().map(|&h| {
+                let mut s = self.clone();
+                s.mode = MixingMode::Alternating { stripe_height: h, angle_degrees: cur_a };
+                (s, format!("h={}", h))
+            }).collect(),
+            AlternatingParam::Angle => (0..12).map(|i| {
+                let a = i as f32 * 15.0;
+                let mut s = self.clone();
+                s.mode = MixingMode::Alternating { stripe_height: cur_h, angle_degrees: a };
+                (s, format!("{:.0}°", a))
+            }).collect(),
+        }
+    }
+
+    pub fn explore_divided(&self, param: DividedParam) -> Vec<(SimSetup, String)> {
+        let (cur_f, cur_a) = if let MixingMode::Divided { fraction, angle_degrees } = self.mode {
+            (fraction, angle_degrees)
+        } else {
+            return Vec::new();
+        };
+        match param {
+            DividedParam::Fraction => (1..=9).map(|i| {
+                let f = i as f32 * 0.1;
+                let mut s = self.clone();
+                s.mode = MixingMode::Divided { fraction: f, angle_degrees: cur_a };
+                (s, format!("{:.0}%", f * 100.0))
+            }).collect(),
+            DividedParam::Angle => (0..12).map(|i| {
+                let a = i as f32 * 15.0;
+                let mut s = self.clone();
+                s.mode = MixingMode::Divided { fraction: cur_f, angle_degrees: a };
+                (s, format!("{:.0}°", a))
+            }).collect(),
+        }
+    }
+
+    pub fn explore_checkerboard(&self, _param: CheckerboardParam) -> Vec<(SimSetup, String)> {
+        if !matches!(self.mode, MixingMode::Checkerboard { .. }) { return Vec::new(); }
+        [1u32, 2, 4, 8, 16, 32, 64, 128].iter().map(|&sq| {
+            let mut s = self.clone();
+            s.mode = MixingMode::Checkerboard { square_size: sq };
+            (s, format!("size={}", sq))
+        }).collect()
+    }
+
+    pub fn explore_circle(&self, _param: CircleParam) -> Vec<(SimSetup, String)> {
+        if !matches!(self.mode, MixingMode::Circle { .. }) { return Vec::new(); }
+        (1..=9).map(|i| {
+            let r = i as f32 * 0.1;
+            let mut s = self.clone();
+            s.mode = MixingMode::Circle { radius_pct: r };
+            (s, format!("{:.0}%", r * 100.0))
+        }).collect()
+    }
 }
+
+pub enum AlternatingParam { StripeHeight, Angle }
+pub enum DividedParam { Fraction, Angle }
+pub enum CheckerboardParam { SquareSize }
+pub enum CircleParam { RadiusPct }
 
 pub fn apply_step(arena: &[u8], rule: &Rule, out: &mut Vec<u8>, rng: &mut SmallRng) {
     let looped = Looped::new(arena);

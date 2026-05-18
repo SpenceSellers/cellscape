@@ -3,7 +3,7 @@ use rand::Rng;
 
 use crate::palette::{ColorPalette, build_palette, draw_palette_params};
 use crate::rule_meta::draw_rule_meta_params;
-use crate::simulation::{compute_sim_setup, random_rule, rule_string_from_lookup, CellSource, MixingMode, SimParameters, SimSetup, DEFAULT_NOISE};
+use crate::simulation::{compute_sim_setup, random_rule, rule_string_from_lookup, CellSource, SimParameters, SimSetup, DEFAULT_NOISE};
 
 #[derive(PartialEq)]
 pub enum Screen {
@@ -268,45 +268,14 @@ pub fn enter_mixed_glance_view(state: &mut GalleryState, base_setup: &SimSetup, 
     }
 }
 
-pub fn enter_mode_explore_view(state: &mut GalleryState, base_setup: &SimSetup) {
-    state.num_states = base_setup.max_num_states();
+pub fn enter_mode_explore_view(state: &mut GalleryState, entries: Vec<(SimSetup, String)>) {
     state.reroll_setup = None;
     state.entries.clear();
-
-    match &base_setup.mode {
-        MixingMode::Alternating { .. } => {
-            for &h in &[2u32, 4, 8, 16, 32, 64] {
-                for &a in &[0.0f32, 30.0, 60.0, 90.0, 120.0, 150.0] {
-                    let mut s = base_setup.clone();
-                    s.mode = MixingMode::Alternating { stripe_height: h, angle_degrees: a };
-                    push_entry(state, s, format!("h={} a={:.0}°", h, a));
-                }
-            }
-        }
-        MixingMode::Divided { .. } => {
-            for &f in &[0.2f32, 0.33, 0.5, 0.67, 0.8] {
-                for &a in &[0.0f32, 30.0, 60.0, 90.0, 120.0, 150.0] {
-                    let mut s = base_setup.clone();
-                    s.mode = MixingMode::Divided { fraction: f, angle_degrees: a };
-                    push_entry(state, s, format!("f={:.0}% a={:.0}°", f * 100.0, a));
-                }
-            }
-        }
-        MixingMode::Checkerboard { .. } => {
-            for &sq in &[1u32, 2, 4, 8, 16, 32, 64, 128] {
-                let mut s = base_setup.clone();
-                s.mode = MixingMode::Checkerboard { square_size: sq };
-                push_entry(state, s, format!("size={}", sq));
-            }
-        }
-        MixingMode::Circle { .. } => {
-            for &r in &[0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] {
-                let mut s = base_setup.clone();
-                s.mode = MixingMode::Circle { radius_pct: r };
-                push_entry(state, s, format!("r={:.0}%", r * 100.0));
-            }
-        }
-        _ => {}
+    if let Some((first, _)) = entries.first() {
+        state.num_states = first.max_num_states();
+    }
+    for (setup, name) in entries {
+        push_entry(state, setup, name);
     }
 }
 
