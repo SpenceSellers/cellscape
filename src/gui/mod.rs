@@ -135,7 +135,7 @@ impl CellularApp {
         let wasm_runner = Some(WasmSimRunner::new(setup.clone(), sim_width, sim_height));
 
         let max_k = setup.max_num_states();
-        let state_palette = build_palette(ColorPalette::Classic, max_k);
+        let state_palette = build_palette(ColorPalette::Grayscale, max_k);
 
         CellularApp {
             #[cfg(not(target_arch = "wasm32"))]
@@ -155,7 +155,7 @@ impl CellularApp {
             setup,
 
             state_palette,
-            selected_palette: ColorPalette::Classic,
+            selected_palette: ColorPalette::Grayscale,
             show_rule_editor: false,
             sidebar_visible: true,
             zoom: 1.0,
@@ -288,6 +288,13 @@ impl CellularApp {
         }
     }
 
+    fn rgb_pixels(&self) -> Vec<u8> {
+        self.cells_data.iter().flat_map(|&v| {
+            let c = self.state_palette[v as usize % self.state_palette.len()];
+            [c.r(), c.g(), c.b()]
+        }).collect()
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn save_image(&mut self) {
         use chrono::Local;
@@ -300,14 +307,44 @@ impl CellularApp {
         let path = format!("output/{}-{}_k{}.png", ts, prefix, max_k);
         let w = self.sim_width as u32;
         let h = self.sim_height as u32;
-        let pixels: Vec<u8> = self.cells_data.iter().flat_map(|&v| {
-            let c = self.state_palette[v as usize % self.state_palette.len()];
-            [c.r(), c.g(), c.b()]
-        }).collect();
-        if let Some(img) = RgbImage::from_raw(w, h, pixels) {
+        if let Some(img) = RgbImage::from_raw(w, h, self.rgb_pixels()) {
             img.save(&path).ok();
         }
         self.saved_at = Some(std::time::Instant::now());
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn save_image(&self) {
+        use image::RgbImage;
+        use wasm_bindgen::JsCast;
+
+        let w = self.sim_width as u32;
+        let h = self.sim_height as u32;
+        let Some(img) = RgbImage::from_raw(w, h, self.rgb_pixels()) else { return; };
+
+        let mut buf = std::io::Cursor::new(Vec::new());
+        if img.write_to(&mut buf, image::ImageFormat::Png).is_err() { return; }
+        let png_bytes = buf.into_inner();
+
+        let array = js_sys::Uint8Array::from(png_bytes.as_slice());
+        let blob_parts = js_sys::Array::new();
+        blob_parts.push(&array);
+        let mut opts = web_sys::BlobPropertyBag::new();
+        opts.set_type("image/png");
+        let Ok(blob) = web_sys::Blob::new_with_u8_array_sequence_and_options(&blob_parts, &opts)
+            else { return; };
+        let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else { return; };
+
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
+        let a: web_sys::HtmlAnchorElement = document.create_element("a").unwrap()
+            .dyn_into().unwrap();
+        a.set_href(&url);
+        a.set_download("cellular.png");
+        document.body().unwrap().append_child(&a).unwrap();
+        a.click();
+        document.body().unwrap().remove_child(&a).unwrap();
+        web_sys::Url::revoke_object_url(&url).ok();
     }
 
     fn process_batch(&mut self, ctx: &egui::Context, batch: SimBatch) {
@@ -566,11 +603,11 @@ fn draw_sidebar(app: &mut CellularApp, ui: &mut egui::Ui) {
 
     ui.separator();
 
-    #[cfg(not(target_arch = "wasm32"))]
     ui.horizontal(|ui| {
         if ui.button("Save PNG").clicked() {
             app.save_image();
         }
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(t) = app.saved_at {
             if t.elapsed() < std::time::Duration::from_secs(2) {
                 ui.label("Saved!");
